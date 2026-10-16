@@ -1,5 +1,15 @@
 # Rustpad
 
+> **About this fork.** Rustpad is the work of
+> [Eric Zhang (@ekzhang)](https://github.com/ekzhang), who designed and built it:
+> the operational transformation, the server, the editor, all of it. The original
+> lives at [ekzhang/rustpad](https://github.com/ekzhang/rustpad).
+>
+> This fork exists only to add MySQL as a storage option (`DATABASE_URL`, next to
+> the existing SQLite support) and to keep its dependencies up to date for
+> security fixes. Everything else here, and all the hard work behind it, is
+> Eric's. The badges and links below still point to his project.
+
 [![Docker Pulls](https://img.shields.io/docker/pulls/ekzhang/rustpad)](https://hub.docker.com/r/ekzhang/rustpad/)
 [![Docker Image Size](https://img.shields.io/docker/image-size/ekzhang/rustpad/latest)](https://hub.docker.com/r/ekzhang/rustpad/)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/ekzhang/rustpad/ci.yml)](https://github.com/ekzhang/rustpad/actions/workflows/ci.yml)
