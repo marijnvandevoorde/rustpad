@@ -111,7 +111,15 @@ following environment variables on startup:
   variables (or without a database) both paths return 404. The editor itself
   stays anonymous.
 - `CF_ACCESS_ALLOWED_EMAILS`: Optional comma-separated list of email addresses
-  allowed to see the list, checked in addition to the Access policy.
+  allowed to see the list, checked in addition to the Access policy. From the
+  list the owner can also set titles (never shown in the editor), lock documents
+  (read-only for everyone) and see and restore earlier versions.
+- `SNAPSHOT_IDLE_MINUTES`: With a database, a version of a changed document is
+  saved once it has not been edited for this many minutes (default 10). A
+  version is also saved when a stored document is opened, when it is locked,
+  before a restore and at shutdown; identical texts are not saved twice.
+- `VERSIONS_KEEP_DAYS`: Versions of the last this many days are all kept
+  (default 30); older ones are thinned to the newest of each day.
 - `PORT`: Which local port to listen for HTTP connections on (defaults to 3030).
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more

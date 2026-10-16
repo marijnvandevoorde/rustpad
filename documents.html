@@ -32,6 +32,20 @@
         <tbody></tbody>
       </table>
     </main>
+    <dialog id="history">
+      <header>
+        <h2 id="history-title">History</h2>
+        <button type="button" id="history-close">Close</button>
+      </header>
+      <p id="history-status"></p>
+      <div class="history-body">
+        <ul id="history-versions"></ul>
+        <div class="history-view">
+          <div id="history-actions"></div>
+          <pre id="history-text"></pre>
+        </div>
+      </div>
+    </dialog>
     <script type="module" src="/src/documents.ts"></script>
   </body>
 </html>

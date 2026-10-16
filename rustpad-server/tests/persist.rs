@@ -7,7 +7,7 @@ use anyhow::Result;
 use common::*;
 use operational_transform::OperationSeq;
 use rustpad_server::{
-    ServerConfig,
+    ServerConfig, Versioning,
     database::{Database, PersistedDocument},
     server, server_with_flusher,
 };
@@ -74,6 +74,7 @@ async fn test_database_mysql() -> Result<()> {
     let prefix = format!("test-{}-", rand::random::<u32>());
     check_database(&uri, &prefix).await?;
     check_list(&uri, &prefix).await?;
+    check_versions(&uri, &prefix).await?;
 
     let database = Database::new(&uri).await?;
     let unicode = PersistedDocument {
@@ -340,7 +341,11 @@ async fn check_list(uri: &str, prefix: &str) -> Result<()> {
     assert!(!database.is_locked(&first).await?);
     assert!(database.set_locked(&first, true).await?);
     assert!(database.is_locked(&first).await?);
-    assert!(!database.set_locked(&format!("{prefix}missing"), true).await?);
+    assert!(
+        !database
+            .set_locked(&format!("{prefix}missing"), true)
+            .await?
+    );
     // updated_at has one-second resolution.
     time::sleep(Duration::from_millis(1100)).await;
     database
@@ -368,5 +373,182 @@ async fn check_list(uri: &str, prefix: &str) -> Result<()> {
     assert_eq!(updated.len(), "2026-01-01T00:00:00Z".len());
     assert!(updated.ends_with('Z'));
     assert_eq!(mine[pos(&second)].preview, "héllo 😀");
+    Ok(())
+}
+
+/// Snapshots, listing and pruning of versions; run on SQLite and MySQL.
+async fn check_versions(uri: &str, prefix: &str) -> Result<()> {
+    let database = Database::new(uri).await?;
+    let id = format!("{prefix}versioned");
+    let doc = |text: &str| PersistedDocument {
+        text: text.into(),
+        language: Some("rust".into()),
+    };
+
+    assert!(database.snapshot(&id, &doc("one"), "idle", 30).await?);
+    // Unchanged text is not saved again.
+    assert!(!database.snapshot(&id, &doc("one"), "idle", 30).await?);
+    assert!(database.snapshot(&id, &doc("two 😀"), "lock", 30).await?);
+
+    let versions = database.versions(&id).await?;
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].reason, "lock");
+    assert_eq!(versions[0].size, 5, "size counts characters");
+    assert_eq!(versions[1].reason, "idle");
+    assert_eq!(versions[0].created_at.len(), "2026-01-01T00:00:00Z".len());
+    let version = database
+        .version(&id, versions[1].id)
+        .await?
+        .expect("version");
+    assert_eq!(version.text, "one");
+    assert_eq!(version.language.as_deref(), Some("rust"));
+    assert!(
+        database
+            .version(&format!("{prefix}other"), versions[1].id)
+            .await?
+            .is_none()
+    );
+
+    // Old versions are thinned to the newest of each day; recent ones stay.
+    let backdated = |days: u32, hour: u32| {
+        if uri.starts_with("mysql://") {
+            format!("DATE_SUB(UTC_DATE(), INTERVAL {days} DAY) + INTERVAL {hour} HOUR")
+        } else {
+            format!("strftime('%Y-%m-%dT{hour:02}:00:00Z', 'now', '-{days} days')")
+        }
+    };
+    let insert = |days: u32, hour: u32, text: &str| {
+        format!(
+            "INSERT INTO document_version (doc_id, text, language, reason, created_at) \
+             VALUES ('{id}', '{text}', NULL, 'idle', {})",
+            backdated(days, hour)
+        )
+    };
+    let statements = [
+        insert(40, 9, "old a"),
+        insert(40, 10, "old b"),
+        insert(40, 11, "old c"),
+        insert(35, 9, "older day"),
+        insert(5, 9, "recent a"),
+        insert(5, 10, "recent b"),
+    ];
+    if uri.starts_with("mysql://") {
+        let pool = sqlx::MySqlPool::connect(uri).await?;
+        for sql in &statements {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&pool)
+                .await?;
+        }
+    } else {
+        let pool = sqlx::SqlitePool::connect(uri).await?;
+        for sql in &statements {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&pool)
+                .await?;
+        }
+    }
+    assert_eq!(database.prune_versions(&id, 30).await?, 2);
+    let texts: Vec<String> = {
+        let mut texts = Vec::new();
+        for v in database.versions(&id).await? {
+            texts.push(database.version(&id, v.id).await?.unwrap().text);
+        }
+        texts.sort();
+        texts
+    };
+    assert_eq!(
+        texts,
+        [
+            "old c",
+            "older day",
+            "one",
+            "recent a",
+            "recent b",
+            "two 😀"
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_versions() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    check_versions(&temp_sqlite_uri()?, "").await
+}
+
+#[tokio::test]
+async fn test_version_triggers() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+
+    let database = Database::new(&temp_sqlite_uri()?).await?;
+    database
+        .store(
+            "doc",
+            &PersistedDocument {
+                text: "original".into(),
+                language: None,
+            },
+        )
+        .await?;
+    let config = || ServerConfig {
+        database: Some(database.clone()),
+        versioning: Versioning {
+            idle: Duration::from_secs(1),
+            keep_days: 30,
+        },
+        ..Default::default()
+    };
+    let (filter, flusher) = server_with_flusher(config());
+    let reasons = |versions: Vec<rustpad_server::database::VersionSummary>| {
+        versions.into_iter().map(|v| v.reason).collect::<Vec<_>>()
+    };
+
+    // Opening a stored document keeps its text as a version.
+    let mut client = connect(&filter, "doc").await?;
+    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    client.recv().await?.get("History").expect("history");
+    time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(reasons(database.versions("doc").await?), ["session start"]);
+
+    // An edit is saved as a version once the document has been idle.
+    let mut operation = OperationSeq::default();
+    operation.delete(8);
+    operation.insert("wiped");
+    client
+        .send(&json!({ "Edit": { "revision": 1, "operation": operation } }))
+        .await;
+    client.recv().await?.get("History").expect("history");
+    time::sleep(Duration::from_millis(9000)).await;
+    assert_eq!(
+        reasons(database.versions("doc").await?),
+        ["idle", "session start"]
+    );
+    let latest = database.versions("doc").await?[0].id;
+    assert_eq!(
+        database.version("doc", latest).await?.unwrap().text,
+        "wiped"
+    );
+
+    // A change right before shutdown is kept as a version too.
+    let mut operation = OperationSeq::default();
+    operation.retain(5);
+    operation.insert("!");
+    client
+        .send(&json!({ "Edit": { "revision": 2, "operation": operation } }))
+        .await;
+    client.recv().await?.get("History").expect("history");
+    time::sleep(Duration::from_millis(4500)).await;
+    flusher.flush().await;
+    assert_eq!(
+        reasons(database.versions("doc").await?),
+        ["shutdown", "idle", "session start"]
+    );
+
+    // Reopening an unchanged document adds nothing.
+    let (filter, _) = server_with_flusher(config());
+    let mut client = connect(&filter, "doc").await?;
+    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(database.versions("doc").await?.len(), 3);
     Ok(())
 }

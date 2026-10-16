@@ -156,3 +156,102 @@ button:hover {
   color: var(--warn);
   font-size: 11px;
 }
+
+dialog {
+  width: min(1000px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+#history-status {
+  margin: 8px 0;
+  color: var(--muted);
+}
+
+.history-body {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+}
+
+#history-versions {
+  flex: 0 0 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+#history-versions li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+#history-versions li:hover,
+#history-versions li.selected {
+  background: var(--input);
+}
+
+#history-versions .meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#history-actions button {
+  margin-left: 0;
+}
+
+#history-text {
+  flex: 1;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input);
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+  white-space: pre;
+}
+
+@media (max-width: 700px) {
+  .history-body {
+    flex-direction: column;
+  }
+
+  #history-versions {
+    flex: 0 0 auto;
+    max-height: 35%;
+  }
+}

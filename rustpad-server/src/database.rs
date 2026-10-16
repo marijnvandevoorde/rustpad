@@ -51,6 +51,48 @@ CREATE TABLE IF NOT EXISTS document (
     language VARCHAR(255)
 ) DEFAULT CHARSET = utf8mb4"#;
 
+const MYSQL_VERSIONS: &str = r#"
+CREATE TABLE IF NOT EXISTS document_version (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    doc_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    text LONGTEXT NOT NULL,
+    language VARCHAR(255),
+    reason VARCHAR(32) NOT NULL,
+    created_at DATETIME NOT NULL,
+    INDEX document_version_doc (doc_id, created_at)
+) DEFAULT CHARSET = utf8mb4"#;
+
+/// A saved version of a document, without its text.
+#[derive(sqlx::FromRow, serde::Serialize, PartialEq, Eq, Clone, Debug)]
+pub struct VersionSummary {
+    /// Version id.
+    pub id: i64,
+    /// When it was taken, in UTC (`YYYY-MM-DDTHH:MM:SSZ`).
+    pub created_at: String,
+    /// Why it was taken: "idle", "session start", "lock", "before restore"
+    /// or "shutdown".
+    pub reason: String,
+    /// Language at that time.
+    pub language: Option<String>,
+    /// Length of the text in characters.
+    pub size: i64,
+}
+
+/// A saved version of a document.
+#[derive(sqlx::FromRow, serde::Serialize, PartialEq, Eq, Clone, Debug)]
+pub struct Version {
+    /// Version id.
+    pub id: i64,
+    /// When it was taken, in UTC (`YYYY-MM-DDTHH:MM:SSZ`).
+    pub created_at: String,
+    /// Why it was taken.
+    pub reason: String,
+    /// Language at that time.
+    pub language: Option<String>,
+    /// Text at that time.
+    pub text: String,
+}
+
 /// Columns added after the first release, created when missing.
 const MYSQL_ADDED_COLUMNS: &[(&str, &str)] = &[
     (
@@ -79,6 +121,7 @@ impl Database {
         if uri.starts_with("mysql://") {
             let pool = MySqlPool::connect(uri).await?;
             sqlx::query(MYSQL_SCHEMA).execute(&pool).await?;
+            sqlx::query(MYSQL_VERSIONS).execute(&pool).await?;
             for (column, ddl) in MYSQL_ADDED_COLUMNS {
                 let (exists,): (i64,) = sqlx::query_as(
                     "SELECT count(*) FROM information_schema.columns WHERE table_schema = \
@@ -260,6 +303,153 @@ ON DUPLICATE KEY UPDATE
             }
         };
         Ok(row.is_some_and(|(locked,)| locked))
+    }
+
+    /// Saves a version of a document, unless it equals the latest version.
+    /// Then thins out versions older than `keep_days` to one per day. Returns
+    /// whether a version was added.
+    pub async fn snapshot(
+        &self,
+        document_id: &str,
+        document: &PersistedDocument,
+        reason: &str,
+        keep_days: u32,
+    ) -> Result<bool> {
+        let latest = "SELECT text, language FROM document_version WHERE doc_id = ? \
+                      ORDER BY id DESC LIMIT 1";
+        let added = match &self.pool {
+            Pool::Sqlite(pool) => {
+                let last: Option<(String, Option<String>)> = sqlx::query_as(latest)
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?;
+                if last.as_ref() == Some(&(document.text.clone(), document.language.clone())) {
+                    false
+                } else {
+                    sqlx::query(
+                        "INSERT INTO document_version (doc_id, text, language, reason, created_at) \
+                         VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                    )
+                    .bind(document_id)
+                    .bind(&document.text)
+                    .bind(&document.language)
+                    .bind(reason)
+                    .execute(pool)
+                    .await?;
+                    true
+                }
+            }
+            Pool::MySql(pool) => {
+                let last: Option<(String, Option<String>)> = sqlx::query_as(latest)
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?;
+                if last.as_ref() == Some(&(document.text.clone(), document.language.clone())) {
+                    false
+                } else {
+                    sqlx::query(
+                        "INSERT INTO document_version (doc_id, text, language, reason, created_at) \
+                         VALUES (?, ?, ?, ?, UTC_TIMESTAMP())",
+                    )
+                    .bind(document_id)
+                    .bind(&document.text)
+                    .bind(&document.language)
+                    .bind(reason)
+                    .execute(pool)
+                    .await?;
+                    true
+                }
+            }
+        };
+        if added {
+            self.prune_versions(document_id, keep_days).await?;
+        }
+        Ok(added)
+    }
+
+    /// Keeps every version of the last `keep_days` days, and the newest of
+    /// each day before that.
+    pub async fn prune_versions(&self, document_id: &str, keep_days: u32) -> Result<u64> {
+        Ok(match &self.pool {
+            Pool::Sqlite(pool) => sqlx::query(
+                "DELETE FROM document_version WHERE id IN (SELECT id FROM ( \
+                   SELECT id, ROW_NUMBER() OVER ( \
+                     PARTITION BY substr(created_at, 1, 10) ORDER BY id DESC) AS n \
+                   FROM document_version WHERE doc_id = ? \
+                   AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-' || ? || ' days') \
+                 ) WHERE n > 1)",
+            )
+            .bind(document_id)
+            .bind(keep_days)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            Pool::MySql(pool) => sqlx::query(
+                "DELETE FROM document_version WHERE id IN (SELECT id FROM ( \
+                   SELECT id, ROW_NUMBER() OVER ( \
+                     PARTITION BY DATE(created_at) ORDER BY id DESC) AS n \
+                   FROM document_version WHERE doc_id = ? \
+                   AND created_at < UTC_TIMESTAMP() - INTERVAL ? DAY \
+                 ) AS old WHERE n > 1)",
+            )
+            .bind(document_id)
+            .bind(keep_days)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+        })
+    }
+
+    /// The versions of a document, newest first.
+    pub async fn versions(&self, document_id: &str) -> Result<Vec<VersionSummary>> {
+        Ok(match &self.pool {
+            Pool::Sqlite(pool) => {
+                sqlx::query_as(
+                    "SELECT id, created_at, reason, language, length(text) AS size \
+                     FROM document_version WHERE doc_id = ? ORDER BY id DESC",
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?
+            }
+            Pool::MySql(pool) => {
+                sqlx::query_as(
+                    "SELECT id, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at, \
+                     reason, language, CAST(CHAR_LENGTH(text) AS SIGNED) AS size \
+                     FROM document_version WHERE doc_id = ? ORDER BY id DESC",
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?
+            }
+        })
+    }
+
+    /// One version of a document.
+    pub async fn version(&self, document_id: &str, version_id: i64) -> Result<Option<Version>> {
+        Ok(match &self.pool {
+            Pool::Sqlite(pool) => {
+                sqlx::query_as(
+                    "SELECT id, created_at, reason, language, text \
+                     FROM document_version WHERE doc_id = ? AND id = ?",
+                )
+                .bind(document_id)
+                .bind(version_id)
+                .fetch_optional(pool)
+                .await?
+            }
+            Pool::MySql(pool) => {
+                sqlx::query_as(
+                    "SELECT id, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at, \
+                     reason, language, text \
+                     FROM document_version WHERE doc_id = ? AND id = ?",
+                )
+                .bind(document_id)
+                .bind(version_id)
+                .fetch_optional(pool)
+                .await?
+            }
+        })
     }
 
     /// Whether a document is stored.

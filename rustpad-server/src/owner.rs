@@ -131,8 +131,46 @@ pub(crate) fn api(state: ServerState) -> BoxedFilter<(Response,)> {
         .and(warp::body::json())
         .and_then(set_lock);
 
+    let versions = warp::path!(String / "versions")
+        .and(warp::get())
+        .and(auth.clone())
+        .and_then(|id: String, db: Database| async move {
+            let versions = db.versions(&id).await.map_err(failed)?;
+            Ok::<_, Rejection>(no_store(warp::reply::json(&versions).into_response()))
+        });
+
+    let version = warp::path!(String / "versions" / i64)
+        .and(warp::get())
+        .and(auth.clone())
+        .and_then(|id: String, version_id: i64, db: Database| async move {
+            match db.version(&id, version_id).await.map_err(failed)? {
+                Some(version) => {
+                    Ok::<_, Rejection>(no_store(warp::reply::json(&version).into_response()))
+                }
+                None => Ok(not_found()),
+            }
+        });
+
+    let restore = warp::path!(String / "versions" / i64 / "restore")
+        .and(warp::post())
+        .and(auth.clone())
+        .and(with_state(state.clone()))
+        .and(warp::body::json())
+        .and_then(restore);
+
     warp::path("documents")
-        .and(list.or(title).unify().or(lock).unify())
+        .and(
+            list.or(title)
+                .unify()
+                .or(lock)
+                .unify()
+                .or(versions)
+                .unify()
+                .or(version)
+                .unify()
+                .or(restore)
+                .unify(),
+        )
         .recover(recover)
         .unify()
         .boxed()
@@ -165,11 +203,52 @@ async fn set_lock(
     if !db.set_locked(&id, body.locked).await.map_err(failed)? {
         return Ok(not_found());
     }
+    if body.locked {
+        // Keep the locked text as a version.
+        if let Some(document) = db.try_load(&id).await.map_err(failed)? {
+            db.snapshot(&id, &document, "lock", state.versioning.keep_days)
+                .await
+                .map_err(failed)?;
+            if let Some(rustpad) = &rustpad {
+                rustpad.set_unversioned(false);
+            }
+        }
+    }
     if let Some(rustpad) = rustpad {
         rustpad.set_locked(body.locked);
     }
     Ok(no_store(
         warp::reply::json(&serde_json::json!({ "locked": body.locked })).into_response(),
+    ))
+}
+
+/// The body of a restore request; empty, but it must be JSON.
+#[derive(Deserialize)]
+struct RestoreRequest {}
+
+async fn restore(
+    id: String,
+    version_id: i64,
+    db: Database,
+    state: ServerState,
+    _body: RestoreRequest,
+) -> Result<Response, Rejection> {
+    let Some(version) = db.version(&id, version_id).await.map_err(failed)? else {
+        return Ok(not_found());
+    };
+    let rustpad = crate::get_or_load(&state, &id).await?;
+    // Keep the current text as a version first, so a restore can be undone.
+    let current = rustpad.snapshot();
+    db.store(&id, &current).await.map_err(failed)?;
+    db.snapshot(&id, &current, "before restore", state.versioning.keep_days)
+        .await
+        .map_err(failed)?;
+    rustpad
+        .replace(&version.text, version.language.clone())
+        .map_err(failed)?;
+    db.store(&id, &rustpad.snapshot()).await.map_err(failed)?;
+    Ok(no_store(
+        warp::reply::json(&serde_json::json!({ "restored": version.id })).into_response(),
     ))
 }
 

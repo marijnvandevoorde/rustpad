@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use log::info;
 use rustpad_server::{
-    ServerConfig, access::AccessVerifier, database::Database, server_with_flusher,
+    ServerConfig, Versioning, access::AccessVerifier, database::Database, server_with_flusher,
 };
 
 #[tokio::main]
@@ -27,6 +29,18 @@ async fn main() {
             Err(_) => None,
         },
         access: None,
+        versioning: Versioning {
+            idle: Duration::from_secs(
+                60 * std::env::var("SNAPSHOT_IDLE_MINUTES")
+                    .unwrap_or_else(|_| String::from("10"))
+                    .parse::<u64>()
+                    .expect("Unable to parse SNAPSHOT_IDLE_MINUTES"),
+            ),
+            keep_days: std::env::var("VERSIONS_KEEP_DAYS")
+                .unwrap_or_else(|_| String::from("30"))
+                .parse()
+                .expect("Unable to parse VERSIONS_KEEP_DAYS"),
+        },
     };
 
     if let (Ok(team), Ok(aud)) = (

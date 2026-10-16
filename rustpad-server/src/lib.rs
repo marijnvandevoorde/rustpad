@@ -61,6 +61,8 @@ struct ServerState {
     database: Option<Database>,
     /// Cloudflare Access verifier, if the document list is enabled.
     access: Option<AccessVerifier>,
+    /// When to save versions of documents.
+    versioning: Versioning,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -84,6 +86,26 @@ pub struct ServerConfig {
     /// Enables the private document list (`/documents`), for users that pass
     /// this Cloudflare Access check. Needs a database.
     pub access: Option<AccessVerifier>,
+    /// When to save versions of documents.
+    pub versioning: Versioning,
+}
+
+/// When to save versions of documents (with a database).
+#[derive(Clone, Copy, Debug)]
+pub struct Versioning {
+    /// Save a version once a changed document has been idle this long.
+    pub idle: Duration,
+    /// Keep every version this many days; older ones are thinned to one a day.
+    pub keep_days: u32,
+}
+
+impl Default for Versioning {
+    fn default() -> Self {
+        Self {
+            idle: Duration::from_secs(10 * 60),
+            keep_days: 30,
+        }
+    }
 }
 
 impl Default for ServerConfig {
@@ -92,6 +114,7 @@ impl Default for ServerConfig {
             expiry_days: 1,
             database: None,
             access: None,
+            versioning: Versioning::default(),
         }
     }
 }
@@ -138,9 +161,16 @@ impl Flusher {
             if rustpad.revision() == 0 && rustpad.language().is_none() {
                 continue;
             }
-            match db.store(&id, &rustpad.snapshot()).await {
+            let document = rustpad.snapshot();
+            match db.store(&id, &document).await {
                 Ok(()) => stored += 1,
                 Err(e) => error!("when flushing document {}: {}", id, e),
+            }
+            if rustpad.unversioned() {
+                let keep_days = self.0.versioning.keep_days;
+                if let Err(e) = db.snapshot(&id, &document, "shutdown", keep_days).await {
+                    error!("when saving a version of {}: {}", id, e);
+                }
             }
         }
         stored
@@ -158,6 +188,7 @@ fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
         documents: Default::default(),
         database: config.database,
         access: config.access,
+        versioning: config.versioning,
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
 
@@ -225,7 +256,12 @@ async fn get_or_load(state: &ServerState, id: &str) -> Result<Arc<Rustpad>, Reje
                 None => Rustpad::default(),
             });
             if let Some(db) = &state.database {
-                tokio::spawn(persister(id, Arc::clone(&rustpad), db.clone()));
+                tokio::spawn(persister(
+                    id,
+                    Arc::clone(&rustpad),
+                    db.clone(),
+                    state.versioning,
+                ));
             }
             e.insert(Document::new(rustpad))
         }
@@ -293,10 +329,23 @@ const PERSIST_INTERVAL: Duration = Duration::from_secs(3);
 const PERSIST_INTERVAL_JITTER: Duration = Duration::from_secs(1);
 
 /// Persists changed documents after a fixed time interval.
-async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
+///
+/// Also saves versions: the text as loaded (so whatever happens in this
+/// session can be undone), and the text once it has been idle for a while.
+async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database, versioning: Versioning) {
     // Start from the state loaded from the database, which needs no write.
     let mut last_revision = rustpad.revision();
     let mut last_language = rustpad.language();
+    let mut last_change: Option<Instant> = None;
+    if last_revision > 0 {
+        let loaded = rustpad.snapshot();
+        if let Err(e) = db
+            .snapshot(&id, &loaded, "session start", versioning.keep_days)
+            .await
+        {
+            error!("when saving a version of {}: {}", id, e);
+        }
+    }
     while !rustpad.killed() {
         let interval =
             PERSIST_INTERVAL + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
@@ -311,6 +360,18 @@ async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
             } else {
                 last_revision = revision;
                 last_language = document.language;
+            }
+            last_change = Some(Instant::now());
+            rustpad.set_unversioned(true);
+        }
+        if rustpad.unversioned() && last_change.is_some_and(|t| t.elapsed() >= versioning.idle) {
+            let document = rustpad.snapshot();
+            match db
+                .snapshot(&id, &document, "idle", versioning.keep_days)
+                .await
+            {
+                Ok(_) => rustpad.set_unversioned(false),
+                Err(e) => error!("when saving a version of {}: {}", id, e),
             }
         }
     }

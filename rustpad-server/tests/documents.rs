@@ -460,7 +460,10 @@ async fn test_lock() -> Result<()> {
     )
     .await;
     assert_eq!(status, 200);
-    assert_eq!(recv_key(&mut carol, "Locked").await?, json!({ "Locked": false }));
+    assert_eq!(
+        recv_key(&mut carol, "Locked").await?,
+        json!({ "Locked": false })
+    );
     carol.send(&insert(1, 12, "!")).await;
     recv_key(&mut carol, "History").await?;
     expect_text(&filter, "abc123", "fn main() {}!").await;
@@ -484,6 +487,78 @@ async fn test_lock() -> Result<()> {
         .await
         .0,
         404
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_versions_and_restore() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    let (filter, database, good) = owner_server().await?;
+    let auth = [("cf-access-jwt-assertion", good.as_str())];
+
+    // Opening the document keeps the loaded text as a version.
+    let mut alice = connect(&filter, "abc123").await?;
+    initial(&mut alice, "Language").await?;
+    alice.send(&insert(1, 12, " // edited")).await;
+    recv_key(&mut alice, "History").await?;
+
+    let (status, body) = send(
+        &filter,
+        "GET",
+        "/api/documents/abc123/versions",
+        &auth,
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let versions: Value = serde_json::from_str(&body)?;
+    assert_eq!(versions[0]["reason"], "session start");
+    let original = versions[0]["id"].as_i64().unwrap();
+
+    let path = format!("/api/documents/abc123/versions/{original}");
+    let (status, body) = send(&filter, "GET", &path, &auth, None).await;
+    assert_eq!(status, 200);
+    let version: Value = serde_json::from_str(&body)?;
+    assert_eq!(version["text"], "fn main() {}");
+
+    // Locking keeps the locked text as a version.
+    let lock = "/api/documents/abc123/lock";
+    send(
+        &filter,
+        "POST",
+        lock,
+        &auth,
+        Some(json!({ "locked": true })),
+    )
+    .await;
+    recv_key(&mut alice, "Locked").await?;
+    let versions = database.versions("abc123").await?;
+    assert_eq!(versions[0].reason, "lock");
+
+    // Restoring works on a locked document, reaches connected editors, and
+    // keeps the replaced text as a version.
+    let restore = format!("{path}/restore");
+    let (status, body) = send(&filter, "POST", &restore, &auth, Some(json!({}))).await;
+    assert_eq!(status, 200, "{body}");
+    let history = recv_key(&mut alice, "History").await?;
+    assert_eq!(history["History"]["operations"][0]["id"], json!(u64::MAX));
+    expect_text(&filter, "abc123", "fn main() {}").await;
+    assert_eq!(database.load("abc123").await?.text, "fn main() {}");
+    // The text before the restore equals the locked version, so no new one.
+    assert_eq!(database.versions("abc123").await?.len(), 2);
+
+    // Unknown versions, other documents' versions, and no token.
+    let missing = "/api/documents/abc123/versions/999999";
+    assert_eq!(send(&filter, "GET", missing, &auth, None).await.0, 404);
+    let foreign = format!("/api/documents/other/versions/{original}");
+    assert_eq!(send(&filter, "GET", &foreign, &auth, None).await.0, 404);
+    assert_eq!(send(&filter, "GET", &path, &[], None).await.0, 403);
+    assert_eq!(
+        send(&filter, "POST", &restore, &[], Some(json!({})))
+            .await
+            .0,
+        403
     );
     Ok(())
 }

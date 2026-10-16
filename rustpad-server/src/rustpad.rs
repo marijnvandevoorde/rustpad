@@ -26,6 +26,8 @@ pub struct Rustpad {
     update: broadcast::Sender<ServerMsg>,
     /// Set to true when the document is destroyed.
     killed: AtomicBool,
+    /// Set when the document changed since its last saved version.
+    unversioned: AtomicBool,
 }
 
 /// Shared state involving multiple users, protected by a lock.
@@ -110,6 +112,7 @@ impl Default for Rustpad {
             notify: Default::default(),
             update: tx,
             killed: AtomicBool::new(false),
+            unversioned: AtomicBool::new(false),
         }
     }
 }
@@ -168,6 +171,38 @@ impl Rustpad {
     pub fn language(&self) -> Option<String> {
         let state = self.state.read();
         state.language.clone()
+    }
+
+    /// Whether the document changed since its last saved version.
+    pub fn unversioned(&self) -> bool {
+        self.unversioned.load(Ordering::Relaxed)
+    }
+
+    /// Records whether the document changed since its last saved version.
+    pub fn set_unversioned(&self, unversioned: bool) {
+        self.unversioned.store(unversioned, Ordering::Relaxed);
+    }
+
+    /// Replaces the whole text (and the language) as a server-side edit, so
+    /// connected editors follow. Works on locked documents too.
+    pub fn replace(&self, text: &str, language: Option<String>) -> Result<()> {
+        let (revision, current_len) = {
+            let state = self.state.read();
+            (
+                state.operations.len(),
+                bytecount::num_chars(state.text.as_bytes()),
+            )
+        };
+        let mut operation = OperationSeq::default();
+        operation.delete(current_len as u64);
+        operation.insert(text);
+        self.apply_edit(u64::MAX, revision, operation)?;
+        self.notify.notify_waiters();
+        if let Some(language) = language {
+            self.state.write().language = Some(language.clone());
+            self.update.send(ServerMsg::Language(language)).ok();
+        }
+        Ok(())
     }
 
     /// Returns whether the document is locked.
