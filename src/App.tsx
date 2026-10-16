@@ -1,4 +1,4 @@
-import { Box, Flex, HStack, Icon, Text, useToast } from "@chakra-ui/react";
+import { Box, Flex, HStack, Icon, Text } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useEffect, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
+import { toaster } from "./toaster";
 import useHash from "./useHash";
 
 function getWsUri(id: string) {
@@ -29,7 +30,6 @@ function generateHue() {
 }
 
 function App() {
-  const toast = useToast();
   const [language, setLanguage] = useState("plaintext");
   const [title, setTitle] = useState("");
   const [connection, setConnection] = useState<
@@ -46,7 +46,7 @@ function App() {
   const [darkMode, setDarkMode] = useLocalStorageState("darkMode", {
     defaultValue: false,
   });
-  const rustpad = useRef<Rustpad>();
+  const rustpad = useRef<Rustpad | undefined>(undefined);
   const id = useHash();
 
   const [readCodeConfirmOpen, setReadCodeConfirmOpen] = useState(false);
@@ -64,11 +64,11 @@ function App() {
         onDisconnected: () => setConnection("disconnected"),
         onDesynchronized: () => {
           setConnection("desynchronized");
-          toast({
+          toaster.create({
             title: "Desynchronized with server",
             description: "Please save your work and refresh the page.",
-            status: "error",
-            duration: null,
+            type: "error",
+            duration: Infinity,
           });
         },
         onChangeLanguage: (language) => {
@@ -84,7 +84,7 @@ function App() {
         rustpad.current = undefined;
       };
     }
-  }, [id, editor, toast, setUsers]);
+  }, [id, editor, setUsers]);
 
   useEffect(() => {
     document.title = title ? `${title} · Rustpad` : "Rustpad";
@@ -99,7 +99,7 @@ function App() {
   function handleLanguageChange(language: string) {
     setLanguage(language);
     if (rustpad.current?.setLanguage(language)) {
-      toast({
+      toaster.create({
         title: "Language updated",
         description: (
           <>
@@ -110,9 +110,9 @@ function App() {
             .
           </>
         ),
-        status: "info",
+        type: "info",
         duration: 2000,
-        isClosable: true,
+        closable: true,
       });
     }
   }
@@ -198,7 +198,7 @@ function App() {
         <Flex flex={1} minW={0} h="100%" direction="column" overflow="hidden">
           <HStack
             h={6}
-            spacing={1}
+            gap={1}
             color="#888888"
             fontWeight="medium"
             fontSize="13px"
@@ -211,7 +211,7 @@ function App() {
             <Icon as={VscGist} fontSize="md" color="purple.500" />
             <Text>{id}</Text>
             {title && (
-              <Text noOfLines={1} color={darkMode ? "#cbcaca" : "#383838"}>
+              <Text lineClamp={1} color={darkMode ? "#cbcaca" : "#383838"}>
                 {title}
               </Text>
             )}

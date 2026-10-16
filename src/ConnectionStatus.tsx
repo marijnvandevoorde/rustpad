@@ -8,7 +8,7 @@ type ConnectionStatusProps = {
 
 function ConnectionStatus({ connection, darkMode }: ConnectionStatusProps) {
   return (
-    <HStack spacing={1}>
+    <HStack gap={1}>
       <Icon
         as={VscCircleFilled}
         color={

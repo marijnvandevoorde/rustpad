@@ -1,12 +1,4 @@
-import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
-  Button,
-} from "@chakra-ui/react";
+import { Button, Dialog, Portal } from "@chakra-ui/react";
 import { useRef } from "react";
 
 export type ReadCodeConfirmProps = {
@@ -20,31 +12,38 @@ function ReadCodeConfirm({ isOpen, onClose, onConfirm }: ReadCodeConfirmProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <AlertDialog
-      isOpen={isOpen}
-      leastDestructiveRef={cancelRef}
-      onClose={onClose}
+    <Dialog.Root
+      role="alertdialog"
+      open={isOpen}
+      onOpenChange={(details) => !details.open && onClose()}
+      initialFocusEl={() => cancelRef.current}
+      placement="center"
     >
-      <AlertDialogOverlay>
-        <AlertDialogContent>
-          <AlertDialogHeader>Clear editor</AlertDialogHeader>
+      <Portal>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content>
+            <Dialog.Header>
+              <Dialog.Title>Clear editor</Dialog.Title>
+            </Dialog.Header>
 
-          <AlertDialogBody>
-            Opening Rustpad's source code will clear the existing shared
-            content. Is this okay?
-          </AlertDialogBody>
+            <Dialog.Body>
+              Opening Rustpad's source code will clear the existing shared
+              content. Is this okay?
+            </Dialog.Body>
 
-          <AlertDialogFooter>
-            <Button ref={cancelRef} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button colorScheme="red" onClick={onConfirm} ml={3}>
-              Clear
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialogOverlay>
-    </AlertDialog>
+            <Dialog.Footer>
+              <Button ref={cancelRef} variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button colorPalette="red" onClick={onConfirm}>
+                Clear
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
   );
 }
 

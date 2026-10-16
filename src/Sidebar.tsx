@@ -5,13 +5,11 @@ import {
   Heading,
   Input,
   InputGroup,
-  InputRightElement,
   Link,
-  Select,
+  NativeSelect,
   Stack,
   Switch,
   Text,
-  useToast,
 } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
 import { VscRepo } from "react-icons/vsc";
@@ -20,6 +18,7 @@ import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
 import languages from "./languages.json";
 import type { UserInfo } from "./rustpad";
+import { toaster } from "./toaster";
 
 export type SidebarProps = {
   documentId: string;
@@ -52,8 +51,6 @@ function Sidebar({
   onChangeName,
   onChangeColor,
 }: SidebarProps) {
-  const toast = useToast();
-
   // Edited locally and sent on Enter or blur, so remote echoes of a
   // half-typed title never overwrite what is being typed.
   const [draftTitle, setDraftTitle] = useState(title);
@@ -64,12 +61,12 @@ function Sidebar({
 
   async function handleCopy() {
     await navigator.clipboard.writeText(documentUrl);
-    toast({
+    toaster.create({
       title: "Copied!",
       description: "Link copied to clipboard",
-      status: "success",
+      type: "success",
       duration: 2000,
-      isClosable: true,
+      closable: true,
     });
   }
 
@@ -87,7 +84,16 @@ function Sidebar({
 
       <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
         <Heading size="sm">Dark Mode</Heading>
-        <Switch isChecked={darkMode} onChange={onDarkModeChange} />
+        <Switch.Root
+          size="sm"
+          checked={darkMode}
+          onCheckedChange={onDarkModeChange}
+        >
+          <Switch.HiddenInput aria-label="Dark mode" />
+          <Switch.Control>
+            <Switch.Thumb />
+          </Switch.Control>
+        </Switch.Root>
       </Flex>
 
       <Heading mt={4} mb={1.5} size="sm">
@@ -112,33 +118,29 @@ function Sidebar({
       <Heading mt={4} mb={1.5} size="sm">
         Language
       </Heading>
-      <Select
-        size="sm"
-        bgColor={darkMode ? "#3c3c3c" : "white"}
-        borderColor={darkMode ? "#3c3c3c" : "white"}
-        value={language}
-        onChange={(event) => onLanguageChange(event.target.value)}
-      >
-        {languages.map((lang) => (
-          <option key={lang} value={lang} style={{ color: "black" }}>
-            {lang}
-          </option>
-        ))}
-      </Select>
+      <NativeSelect.Root size="sm">
+        <NativeSelect.Field
+          aria-label="Language"
+          bgColor={darkMode ? "#3c3c3c" : "white"}
+          borderColor={darkMode ? "#3c3c3c" : "white"}
+          value={language}
+          onChange={(event) => onLanguageChange(event.target.value)}
+        >
+          {languages.map((lang) => (
+            <option key={lang} value={lang} style={{ color: "black" }}>
+              {lang}
+            </option>
+          ))}
+        </NativeSelect.Field>
+        <NativeSelect.Indicator />
+      </NativeSelect.Root>
 
       <Heading mt={4} mb={1.5} size="sm">
         Share Link
       </Heading>
-      <InputGroup size="sm">
-        <Input
-          readOnly
-          pr="3.5rem"
-          variant="outline"
-          bgColor={darkMode ? "#3c3c3c" : "white"}
-          borderColor={darkMode ? "#3c3c3c" : "white"}
-          value={documentUrl}
-        />
-        <InputRightElement width="3.5rem">
+      <InputGroup
+        endElementProps={{ pe: 1 }}
+        endElement={
           <Button
             h="1.4rem"
             size="xs"
@@ -149,13 +151,22 @@ function Sidebar({
           >
             Copy
           </Button>
-        </InputRightElement>
+        }
+      >
+        <Input
+          readOnly
+          size="sm"
+          variant="outline"
+          bgColor={darkMode ? "#3c3c3c" : "white"}
+          borderColor={darkMode ? "#3c3c3c" : "white"}
+          value={documentUrl}
+        />
       </InputGroup>
 
       <Heading mt={4} mb={1.5} size="sm">
         Active Users
       </Heading>
-      <Stack spacing={0} mb={1.5} fontSize="sm">
+      <Stack gap={0} mb={1.5} fontSize="sm">
         <User
           info={currentUser}
           isMe
@@ -185,7 +196,8 @@ function Sidebar({
           color="blue.600"
           fontWeight="semibold"
           href="https://github.com/ekzhang/rustpad"
-          isExternal
+          target="_blank"
+          rel="noopener noreferrer"
         >
           GitHub repository
         </Link>{" "}
@@ -194,14 +206,14 @@ function Sidebar({
 
       <Button
         size="sm"
-        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
         borderColor={darkMode ? "purple.400" : "purple.600"}
         color={darkMode ? "purple.400" : "purple.600"}
+        _hover={{ bg: darkMode ? "whiteAlpha.200" : "blackAlpha.100" }}
         variant="outline"
-        leftIcon={<VscRepo />}
         mt={1}
         onClick={onLoadSample}
       >
+        <VscRepo />
         Read the code
       </Button>
     </Container>
