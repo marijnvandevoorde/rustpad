@@ -1,9 +1,5 @@
 import debounce from "lodash.debounce";
-import type {
-  IDisposable,
-  IPosition,
-  editor,
-} from "monaco-editor/esm/vs/editor/editor.api";
+import type { IDisposable, IPosition, editor } from "monaco-editor";
 import { OpSeq } from "rustpad-wasm";
 
 /** Options passed in to the Rustpad constructor. */

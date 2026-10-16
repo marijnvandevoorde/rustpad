@@ -1,6 +1,6 @@
 import { Box, Flex, HStack, Icon, Text, useToast } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
-import { editor } from "monaco-editor/esm/vs/editor/editor.api";
+import type { editor } from "monaco-editor";
 import { useEffect, useRef, useState } from "react";
 import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";

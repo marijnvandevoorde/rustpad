@@ -28,11 +28,11 @@
     "@types/lodash.debounce": "^4.0.9",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.1.2",
     "monaco-editor": "^0.57.0",
     "prettier": "^3.9.10",
-    "typescript": "~5.7.2",
-    "vite": "^6.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
     "vite-plugin-wasm": "^3.6.0"
   }
 }
