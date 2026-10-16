@@ -1,4 +1,4 @@
-use rustpad_server::{server, database::Database, ServerConfig};
+use rustpad_server::{database::Database, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -15,11 +15,11 @@ async fn main() {
             .unwrap_or_else(|_| String::from("1"))
             .parse()
             .expect("Unable to parse EXPIRY_DAYS"),
-        database: match std::env::var("SQLITE_URI") {
+        database: match std::env::var("DATABASE_URL").or_else(|_| std::env::var("SQLITE_URI")) {
             Ok(uri) => Some(
                 Database::new(&uri)
                     .await
-                    .expect("Unable to connect to SQLITE_URI"),
+                    .expect("Unable to connect to DATABASE_URL / SQLITE_URI"),
             ),
             Err(_) => None,
         },

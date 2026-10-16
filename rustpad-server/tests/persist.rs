@@ -1,4 +1,5 @@
-//! Tests to ensure that documents are persisted with SQLite.
+//! Tests to ensure that documents are persisted with SQLite (and MySQL, when
+//! `TEST_MYSQL_URL` points at a disposable MySQL database).
 
 use std::time::Duration;
 
@@ -29,32 +30,62 @@ fn temp_sqlite_uri() -> Result<String> {
 #[tokio::test]
 async fn test_database() -> Result<()> {
     pretty_env_logger::try_init().ok();
+    check_database(&temp_sqlite_uri()?, "").await
+}
 
-    let database = Database::new(&temp_sqlite_uri()?).await?;
+#[tokio::test]
+async fn test_database_mysql() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    let Ok(uri) = std::env::var("TEST_MYSQL_URL") else {
+        eprintln!("TEST_MYSQL_URL not set, skipping");
+        return Ok(());
+    };
+    // Unique ids, so reruns against the same database do not collide.
+    let prefix = format!("test-{}-", rand::random::<u32>());
+    check_database(&uri, &prefix).await?;
 
-    assert!(database.load("hello").await.is_err());
-    assert!(database.load("world").await.is_err());
+    let database = Database::new(&uri).await?;
+    let unicode = PersistedDocument {
+        text: "h\u{e9}llo \u{1f600} \u{4e16}\u{754c}".into(),
+        language: Some("markdown".into()),
+    };
+    let id = format!("{prefix}unicode");
+    database.store(&id, &unicode).await?;
+    // Storing an identical document again must not fail.
+    database.store(&id, &unicode).await?;
+    assert_eq!(database.load(&id).await?, unicode);
+    assert!(database.count().await? >= 3);
+    Ok(())
+}
+
+async fn check_database(uri: &str, prefix: &str) -> Result<()> {
+    let database = Database::new(uri).await?;
+    let hello = format!("{prefix}hello");
+    let world = format!("{prefix}world");
+
+    assert!(database.load(&hello).await.is_err());
+    assert!(database.load(&world).await.is_err());
 
     let doc1 = PersistedDocument {
         text: "Hello Text".into(),
         language: None,
     };
 
-    assert!(database.store("hello", &doc1).await.is_ok());
-    assert_eq!(database.load("hello").await?, doc1);
-    assert!(database.load("world").await.is_err());
+    assert!(database.store(&hello, &doc1).await.is_ok());
+    assert_eq!(database.load(&hello).await?, doc1);
+    assert!(database.load(&world).await.is_err());
 
     let doc2 = PersistedDocument {
         text: "print('World Text :)')".into(),
         language: Some("python".into()),
     };
 
-    assert!(database.store("world", &doc2).await.is_ok());
-    assert_eq!(database.load("hello").await?, doc1);
-    assert_eq!(database.load("world").await?, doc2);
+    assert!(database.store(&world, &doc2).await.is_ok());
+    assert_eq!(database.load(&hello).await?, doc1);
+    assert_eq!(database.load(&world).await?, doc2);
 
-    assert!(database.store("hello", &doc2).await.is_ok());
-    assert_eq!(database.load("hello").await?, doc2);
+    assert!(database.store(&hello, &doc2).await.is_ok());
+    assert_eq!(database.load(&hello).await?, doc2);
 
     Ok(())
 }
