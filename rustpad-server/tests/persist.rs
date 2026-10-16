@@ -212,3 +212,28 @@ async fn test_flush() -> Result<()> {
     client.recv_closed().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_load_error() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+
+    let uri = temp_sqlite_uri()?;
+    let database = Database::new(&uri).await?;
+    let filter = server(ServerConfig {
+        expiry_days: 2,
+        database: Some(database),
+    });
+
+    // Break the database, so loading fails with an error other than "missing".
+    let pool = sqlx::SqlitePool::connect(&uri).await?;
+    sqlx::query("DROP TABLE document").execute(&pool).await?;
+
+    // The document must not be opened as empty, or edits would overwrite it.
+    assert!(connect(&filter, "broken").await.is_err());
+    let resp = warp::test::request()
+        .path("/api/text/broken")
+        .reply(&filter)
+        .await;
+    assert_eq!(resp.status(), 500);
+    Ok(())
+}

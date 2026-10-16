@@ -179,8 +179,16 @@ async fn socket_handler(id: String, ws: Ws, state: ServerState) -> Result<impl R
     let mut entry = match state.documents.entry(id.clone()) {
         Entry::Occupied(e) => e.into_ref(),
         Entry::Vacant(e) => {
+            // A database error must not open the document as empty: the
+            // persister would then overwrite the stored text.
             let rustpad = Arc::new(match &state.database {
-                Some(db) => db.load(&id).await.map(Rustpad::from).unwrap_or_default(),
+                Some(db) => match db.try_load(&id).await {
+                    Ok(document) => document.map(Rustpad::from).unwrap_or_default(),
+                    Err(e) => {
+                        error!("when loading document {}: {}", id, e);
+                        return Err(warp::reject::custom(CustomReject(e)));
+                    }
+                },
                 None => Rustpad::default(),
             });
             if let Some(db) = &state.database {
@@ -202,10 +210,10 @@ async fn text_handler(id: String, state: ServerState) -> Result<impl Reply, Reje
         Some(value) => value.rustpad.text(),
         None => {
             if let Some(db) = &state.database {
-                db.load(&id)
-                    .await
-                    .map(|document| document.text)
-                    .unwrap_or_default()
+                match db.try_load(&id).await {
+                    Ok(document) => document.map(|d| d.text).unwrap_or_default(),
+                    Err(e) => return Err(warp::reject::custom(CustomReject(e))),
+                }
             } else {
                 String::new()
             }
@@ -258,8 +266,8 @@ async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
     let mut last_revision = rustpad.revision();
     let mut last_language = rustpad.language();
     while !rustpad.killed() {
-        let interval = PERSIST_INTERVAL
-            + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
+        let interval =
+            PERSIST_INTERVAL + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
         let revision = rustpad.revision();
         // A language change does not create a revision, so compare it too.

@@ -78,6 +78,18 @@ impl Database {
         })
     }
 
+    /// Load a document, or `None` if it does not exist. Unlike [`Self::load`],
+    /// other errors are not mixed up with a missing document.
+    pub async fn try_load(&self, document_id: &str) -> Result<Option<PersistedDocument>> {
+        match self.load(document_id).await {
+            Ok(document) => Ok(Some(document)),
+            Err(e) => match e.downcast_ref::<sqlx::Error>() {
+                Some(sqlx::Error::RowNotFound) => Ok(None),
+                _ => Err(e),
+            },
+        }
+    }
+
     /// Store the text of a document in the database.
     pub async fn store(&self, document_id: &str, document: &PersistedDocument) -> Result<()> {
         let rows = match &self.pool {
