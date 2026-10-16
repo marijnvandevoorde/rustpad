@@ -1,14 +1,15 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
 
 export default defineConfig({
   base: "",
   build: {
+    // Top-level await (used to load the WebAssembly module) needs ES2022.
+    target: "es2022",
     chunkSizeWarningLimit: 1000,
   },
-  plugins: [wasm(), topLevelAwait(), react()],
+  plugins: [wasm(), react()],
   server: {
     proxy: {
       "/api": {
