@@ -84,7 +84,7 @@ impl Database {
                 .fetch_one(&pool)
                 .await?;
                 if exists == 0 {
-                    sqlx::query(ddl).execute(&pool).await?;
+                    sqlx::query(*ddl).execute(&pool).await?;
                 }
             }
             return Ok(Database {

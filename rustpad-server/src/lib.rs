@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use dashmap::DashMap;
 use log::{error, info, warn};
-use rand::Rng;
+use rand::RngExt;
 use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
