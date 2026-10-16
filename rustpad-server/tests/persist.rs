@@ -529,20 +529,34 @@ async fn test_version_triggers() -> Result<()> {
         "wiped"
     );
 
-    // A change right before shutdown is kept as a version too.
+    // A change not yet saved as a version is saved at shutdown. (A long idle
+    // time here, so only the shutdown can save it.)
+    let (slow, flusher) = server_with_flusher(ServerConfig {
+        database: Some(database.clone()),
+        versioning: Versioning {
+            idle: Duration::from_secs(3600),
+            keep_days: 30,
+        },
+        ..Default::default()
+    });
+    let mut client = connect(&slow, "doc").await?;
+    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    client.recv().await?.get("History").expect("history");
     let mut operation = OperationSeq::default();
     operation.retain(5);
     operation.insert("!");
     client
-        .send(&json!({ "Edit": { "revision": 2, "operation": operation } }))
+        .send(&json!({ "Edit": { "revision": 1, "operation": operation } }))
         .await;
     client.recv().await?.get("History").expect("history");
     time::sleep(Duration::from_millis(4500)).await;
+    assert_eq!(database.versions("doc").await?.len(), 2);
     flusher.flush().await;
     assert_eq!(
         reasons(database.versions("doc").await?),
         ["shutdown", "idle", "session start"]
     );
+    drop(flusher);
 
     // Reopening an unchanged document adds nothing.
     let (filter, _) = server_with_flusher(config());
