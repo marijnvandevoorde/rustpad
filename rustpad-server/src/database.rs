@@ -28,10 +28,10 @@ pub struct Database {
 
 const MYSQL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS document (
-    id VARCHAR(255) NOT NULL PRIMARY KEY,
+    id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
     text LONGTEXT NOT NULL,
     language VARCHAR(255)
-) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin"#;
+) DEFAULT CHARSET = utf8mb4"#;
 
 impl Database {
     /// Construct a new database from a SQLite or MySQL connection URI.

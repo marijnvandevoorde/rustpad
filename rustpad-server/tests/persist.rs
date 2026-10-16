@@ -54,7 +54,15 @@ async fn test_database_mysql() -> Result<()> {
     // Storing an identical document again must not fail.
     database.store(&id, &unicode).await?;
     assert_eq!(database.load(&id).await?, unicode);
-    assert!(database.count().await? >= 3);
+    // Document ids are case-sensitive.
+    let upper = PersistedDocument {
+        text: "upper".into(),
+        language: None,
+    };
+    database.store(&format!("{prefix}CASE"), &upper).await?;
+    assert!(database.load(&format!("{prefix}case")).await.is_err());
+    assert_eq!(database.load(&format!("{prefix}CASE")).await?, upper);
+    assert!(database.count().await? >= 4);
     Ok(())
 }
 
