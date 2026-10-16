@@ -34,6 +34,40 @@ function firstLine(text: string): string {
   return text.trim().split("\n")[0].trim();
 }
 
+/** Sends a change to the owner API; returns the parsed JSON response. */
+async function api(method: string, path: string, body: unknown): Promise<any> {
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+function button(label: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+async function rename(doc: DocumentSummary) {
+  const title = prompt(`Title for ${doc.id} (empty to clear)`, doc.title ?? "");
+  if (title === null) return;
+  try {
+    const result = await api("PUT", `api/documents/${doc.id}/title`, { title });
+    doc.title = result.title;
+    render();
+  } catch (error) {
+    alert(`Could not rename: ${error}`);
+  }
+}
+
 function row(doc: DocumentSummary): HTMLTableRowElement {
   const tr = document.createElement("tr");
 
@@ -64,7 +98,11 @@ function row(doc: DocumentSummary): HTMLTableRowElement {
     updated.title = "Not saved since dates were recorded";
   }
 
-  tr.append(title, language, updated);
+  const actions = document.createElement("td");
+  actions.className = "actions";
+  actions.append(button("Rename", () => rename(doc)));
+
+  tr.append(title, language, updated, actions);
   return tr;
 }
 

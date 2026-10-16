@@ -11,7 +11,6 @@ import {
   Switch,
   Text,
 } from "@chakra-ui/react";
-import { useEffect, useState } from "react";
 import { VscRepo } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
@@ -25,12 +24,10 @@ export type SidebarProps = {
   connection: "connected" | "disconnected" | "desynchronized";
   darkMode: boolean;
   language: string;
-  title: string;
   currentUser: UserInfo;
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
   onLanguageChange: (language: string) => void;
-  onTitleChange: (title: string) => void;
   onLoadSample: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
@@ -41,21 +38,14 @@ function Sidebar({
   connection,
   darkMode,
   language,
-  title,
   currentUser,
   users,
   onDarkModeChange,
   onLanguageChange,
-  onTitleChange,
   onLoadSample,
   onChangeName,
   onChangeColor,
 }: SidebarProps) {
-  // Edited locally and sent on Enter or blur, so remote echoes of a
-  // half-typed title never overwrite what is being typed.
-  const [draftTitle, setDraftTitle] = useState(title);
-  useEffect(() => setDraftTitle(title), [title]);
-
   // For sharing the document by link to others.
   const documentUrl = `${window.location.origin}/#${documentId}`;
 
@@ -95,25 +85,6 @@ function Sidebar({
           </Switch.Control>
         </Switch.Root>
       </Flex>
-
-      <Heading mt={4} mb={1.5} size="sm">
-        Title
-      </Heading>
-      <Input
-        size="sm"
-        placeholder="Untitled"
-        maxLength={200}
-        bgColor={darkMode ? "#3c3c3c" : "white"}
-        borderColor={darkMode ? "#3c3c3c" : "white"}
-        value={draftTitle}
-        onChange={(event) => setDraftTitle(event.target.value)}
-        onBlur={() => onTitleChange(draftTitle)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-      />
 
       <Heading mt={4} mb={1.5} size="sm">
         Language

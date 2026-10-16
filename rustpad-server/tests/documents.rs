@@ -75,7 +75,8 @@ fn claims(email: &str) -> Value {
 }
 
 async fn database() -> Result<Database> {
-    let path = NamedTempFile::new()?.into_temp_path();
+    // Kept on disk: the pool opens new connections to it later.
+    let path = NamedTempFile::new()?.into_temp_path().keep()?;
     let database = Database::new(&format!("sqlite://{}", path.to_str().unwrap())).await?;
     database
         .store(
@@ -83,10 +84,10 @@ async fn database() -> Result<Database> {
             &PersistedDocument {
                 text: "fn main() {}".into(),
                 language: Some("rust".into()),
-                title: Some("Interview Jane".into()),
             },
         )
         .await?;
+    database.set_title("abc123", Some("Interview Jane")).await?;
     Ok(database)
 }
 
@@ -219,4 +220,141 @@ fn test_cloudflare_key_set_format() {
     body["public_certs"] = json!([body["public_cert"].clone()]);
     let set: jsonwebtoken::jwk::JwkSet = serde_json::from_value(body).unwrap();
     assert!(set.find("test-key").is_some());
+}
+
+/// Sends a request with a method, headers and an optional JSON body.
+async fn send(
+    filter: &BoxedFilter<(impl Reply + 'static,)>,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    json_body: Option<Value>,
+) -> (u16, String) {
+    let mut request = warp::test::request().method(method).path(path);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    if let Some(body) = json_body {
+        request = request
+            .header("content-type", "application/json")
+            .body(body.to_string());
+    }
+    let resp = request.reply(filter).await;
+    (
+        resp.status().as_u16(),
+        String::from_utf8_lossy(resp.body()).into_owned(),
+    )
+}
+
+/// A server with Access enabled, and a valid token for it.
+async fn owner_server() -> Result<(BoxedFilter<(impl Reply,)>, Database, String)> {
+    let (certs_url, _) = serve_jwks().await?;
+    let database = database().await?;
+    let filter = server(ServerConfig {
+        database: Some(database.clone()),
+        access: Some(AccessVerifier::with_certs_url(TEAM, AUD, &[], &certs_url)),
+        ..Default::default()
+    });
+    Ok((
+        filter,
+        database,
+        token(KEY, "test-key", claims("owner@example.com")),
+    ))
+}
+
+#[tokio::test]
+async fn test_set_title() -> Result<()> {
+    let (filter, database, good) = owner_server().await?;
+    let auth = [("cf-access-jwt-assertion", good.as_str())];
+    let path = "/api/documents/abc123/title";
+
+    let (status, body) = send(
+        &filter,
+        "PUT",
+        path,
+        &auth,
+        Some(json!({ "title": "  Interview Bob " })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        database.list().await?[0].title.as_deref(),
+        Some("Interview Bob")
+    );
+
+    // Same-site requests are fine; cross-site ones are refused.
+    let same_site = [
+        ("cf-access-jwt-assertion", good.as_str()),
+        ("host", "code.example.com"),
+        ("origin", "https://code.example.com"),
+    ];
+    let cross_site = [
+        ("cf-access-jwt-assertion", good.as_str()),
+        ("host", "code.example.com"),
+        ("origin", "https://evil.example.net"),
+    ];
+    assert_eq!(
+        send(
+            &filter,
+            "PUT",
+            path,
+            &same_site,
+            Some(json!({ "title": "A" }))
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(
+        send(
+            &filter,
+            "PUT",
+            path,
+            &cross_site,
+            Some(json!({ "title": "B" }))
+        )
+        .await
+        .0,
+        403
+    );
+
+    // No token, or not JSON (a plain form post): refused.
+    assert_eq!(
+        send(&filter, "PUT", path, &[], Some(json!({ "title": "C" })))
+            .await
+            .0,
+        403
+    );
+    let resp = warp::test::request()
+        .method("PUT")
+        .path(path)
+        .header("cf-access-jwt-assertion", good.as_str())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("title=D")
+        .reply(&filter)
+        .await;
+    assert!(resp.status().is_client_error());
+    assert_eq!(database.list().await?[0].title.as_deref(), Some("A"));
+
+    // Clearing, and a document that does not exist.
+    assert_eq!(
+        send(&filter, "PUT", path, &auth, Some(json!({ "title": "  " })))
+            .await
+            .0,
+        200
+    );
+    assert_eq!(database.list().await?[0].title, None);
+    assert_eq!(
+        send(
+            &filter,
+            "PUT",
+            "/api/documents/nope/title",
+            &auth,
+            Some(json!({ "title": "x" }))
+        )
+        .await
+        .0,
+        404
+    );
+    Ok(())
 }

@@ -116,3 +116,32 @@ a.untitled {
     display: none;
   }
 }
+
+td.actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+button {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

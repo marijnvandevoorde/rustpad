@@ -18,6 +18,7 @@ use crate::{access::AccessVerifier, database::Database, rustpad::Rustpad};
 pub mod access;
 pub mod database;
 mod ot;
+mod owner;
 mod rustpad;
 
 /// An entry stored in the global server map.
@@ -103,17 +104,9 @@ pub fn server(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
 /// Like [`server`], plus a [`Flusher`] to save every document before exiting.
 pub fn server_with_flusher(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, Flusher) {
     let (backend, state) = backend(config);
-    let page = warp::path!("documents")
-        .and(warp::get())
-        .and(warp::header::optional::<String>(access::HEADER))
-        .and(warp::any().map({
-            let state = state.clone();
-            move || state.clone()
-        }))
-        .and_then(documents_page_handler);
     let filter = warp::path("api")
         .and(backend)
-        .or(page)
+        .or(owner::page(state.clone()))
         .or(frontend())
         .boxed();
     (filter, Flusher(state))
@@ -142,8 +135,7 @@ impl Flusher {
             // Stop accepting edits, so nothing changes after the snapshot.
             rustpad.kill();
             // A document that was never edited and has no language is empty.
-            if rustpad.revision() == 0 && rustpad.language().is_none() && rustpad.title().is_none()
-            {
+            if rustpad.revision() == 0 && rustpad.language().is_none() {
                 continue;
             }
             match db.store(&id, &rustpad.snapshot()).await {
@@ -190,11 +182,7 @@ fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
         .and(state_filter.clone())
         .and_then(stats_handler);
 
-    let documents = warp::path!("documents")
-        .and(warp::get())
-        .and(warp::header::optional::<String>(access::HEADER))
-        .and(state_filter.clone())
-        .and_then(documents_handler);
+    let documents = owner::api(returned_state.clone());
 
     (
         socket.or(text).or(stats).or(documents).boxed(),
@@ -204,8 +192,15 @@ fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
 
 /// Handler for the `/api/socket/{id}` endpoint.
 async fn socket_handler(id: String, ws: Ws, state: ServerState) -> Result<impl Reply, Rejection> {
+    let rustpad = get_or_load(&state, &id).await?;
+    Ok(ws.on_upgrade(|socket| async move { rustpad.on_connection(socket).await }))
+}
+
+/// Returns a document from memory, loading it from the database if needed.
+async fn get_or_load(state: &ServerState, id: &str) -> Result<Arc<Rustpad>, Rejection> {
     use dashmap::mapref::entry::Entry;
 
+    let id = id.to_owned();
     let mut entry = match state.documents.entry(id.clone()) {
         Entry::Occupied(e) => e.into_ref(),
         Entry::Vacant(e) => {
@@ -230,8 +225,7 @@ async fn socket_handler(id: String, ws: Ws, state: ServerState) -> Result<impl R
 
     let value = entry.value_mut();
     value.last_accessed = Instant::now();
-    let rustpad = Arc::clone(&value.rustpad);
-    Ok(ws.on_upgrade(|socket| async move { rustpad.on_connection(socket).await }))
+    Ok(Arc::clone(&value.rustpad))
 }
 
 /// Handler for the `/api/text/{id}` endpoint.
@@ -249,70 +243,6 @@ async fn text_handler(id: String, state: ServerState) -> Result<impl Reply, Reje
             }
         }
     })
-}
-
-/// Checks a Cloudflare Access token for the document list. Rejects with "not
-/// found" when the list is not enabled, so it looks like it does not exist.
-async fn check_access(
-    token: Option<String>,
-    state: &ServerState,
-) -> Result<Result<&Database, warp::reply::Response>, Rejection> {
-    let (Some(verifier), Some(db)) = (&state.access, &state.database) else {
-        return Err(warp::reject::not_found());
-    };
-    let denied = || {
-        Err(
-            warp::reply::with_status("Forbidden", warp::http::StatusCode::FORBIDDEN)
-                .into_response(),
-        )
-    };
-    let Some(token) = token else {
-        return Ok(denied());
-    };
-    match verifier.verify(&token).await {
-        Ok(_) => Ok(Ok(db)),
-        Err(e) => {
-            warn!("rejected an Access token: {e:#}");
-            Ok(denied())
-        }
-    }
-}
-
-/// Handler for the `/api/documents` endpoint: all documents, newest first.
-async fn documents_handler(
-    token: Option<String>,
-    state: ServerState,
-) -> Result<warp::reply::Response, Rejection> {
-    let db = match check_access(token, &state).await? {
-        Ok(db) => db,
-        Err(denied) => return Ok(denied),
-    };
-    match db.list().await {
-        Ok(list) => Ok(no_store(warp::reply::json(&list).into_response())),
-        Err(e) => Err(warp::reject::custom(CustomReject(e))),
-    }
-}
-
-/// Handler for the `/documents` page.
-async fn documents_page_handler(
-    token: Option<String>,
-    state: ServerState,
-) -> Result<warp::reply::Response, Rejection> {
-    if let Err(denied) = check_access(token, &state).await? {
-        return Ok(denied);
-    }
-    match tokio::fs::read_to_string("dist/documents.html").await {
-        Ok(html) => Ok(no_store(warp::reply::html(html).into_response())),
-        Err(_) => Err(warp::reject::not_found()),
-    }
-}
-
-fn no_store(mut response: warp::reply::Response) -> warp::reply::Response {
-    response.headers_mut().insert(
-        warp::http::header::CACHE_CONTROL,
-        warp::http::HeaderValue::from_static("no-store"),
-    );
-    response
 }
 
 /// Handler for the `/api/stats` endpoint.
@@ -358,21 +288,21 @@ const PERSIST_INTERVAL_JITTER: Duration = Duration::from_secs(1);
 async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
     // Start from the state loaded from the database, which needs no write.
     let mut last_revision = rustpad.revision();
-    let mut last_meta = (rustpad.language(), rustpad.title());
+    let mut last_language = rustpad.language();
     while !rustpad.killed() {
         let interval =
             PERSIST_INTERVAL + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
         let revision = rustpad.revision();
-        // Language and title changes do not create a revision, so compare them too.
-        if revision > last_revision || (rustpad.language(), rustpad.title()) != last_meta {
+        // A language change does not create a revision, so compare it too.
+        if revision > last_revision || rustpad.language() != last_language {
             info!("persisting revision {} for id = {}", revision, id);
             let document = rustpad.snapshot();
             if let Err(e) = db.store(&id, &document).await {
                 error!("when persisting document {}: {}", id, e);
             } else {
                 last_revision = revision;
-                last_meta = (document.language, document.title);
+                last_language = document.language;
             }
         }
     }
