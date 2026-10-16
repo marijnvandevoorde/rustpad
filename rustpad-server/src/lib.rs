@@ -259,7 +259,7 @@ async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
     let mut last_language = rustpad.language();
     while !rustpad.killed() {
         let interval = PERSIST_INTERVAL
-            + rand::thread_rng().gen_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
+            + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
         let revision = rustpad.revision();
         // A language change does not create a revision, so compare it too.

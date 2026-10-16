@@ -3,7 +3,7 @@ use rustpad_server::{database::Database, server_with_flusher, ServerConfig};
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     pretty_env_logger::init();
 
     let port = std::env::var("PORT")
