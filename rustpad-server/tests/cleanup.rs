@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use common::*;
 use operational_transform::OperationSeq;
-use rustpad_server::{server, ServerConfig};
+use rustpad_server::{ServerConfig, server};
 use serde_json::json;
 use tokio::time;
 

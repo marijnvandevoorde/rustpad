@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use common::*;
 use log::info;
 use operational_transform::OperationSeq;
-use rustpad_server::{server, ServerConfig};
-use serde_json::{json, Value};
+use rustpad_server::{ServerConfig, server};
+use serde_json::{Value, json};
 use tokio::time::Instant;
 
 pub mod common;

@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::prelude::*;
 use log::{info, warn};
 use operational_transform::OperationSeq;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{Notify, broadcast};
 use warp::ws::{Message, WebSocket};
 
 use crate::{database::PersistedDocument, ot::transform_index};

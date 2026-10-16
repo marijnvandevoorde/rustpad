@@ -1,6 +1,6 @@
 use log::info;
 use rustpad_server::{
-    access::AccessVerifier, database::Database, server_with_flusher, ServerConfig,
+    ServerConfig, access::AccessVerifier, database::Database, server_with_flusher,
 };
 
 #[tokio::main]
@@ -58,7 +58,7 @@ async fn main() {
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         let mut term = signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
         tokio::select! {
             _ = term.recv() => {}

@@ -1,18 +1,25 @@
-FROM rust:alpine AS backend
+FROM docker.io/library/rust:1.95-alpine AS backend
 WORKDIR /home/rust/src
 RUN apk --no-cache add musl-dev openssl-dev
 COPY . .
-RUN cargo test --release
+# Tests run in the debug profile, so the release build is the only LTO build.
+RUN cargo test
 RUN cargo build --release
 
-FROM --platform=amd64 rust:alpine AS wasm
+# The WebAssembly and frontend stages produce platform-independent files, so
+# they run on the build machine's own platform.
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.95-alpine AS wasm
+ARG WASM_PACK_VERSION=0.15.0
 WORKDIR /home/rust/src
-RUN apk --no-cache add curl musl-dev
-RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+RUN apk --no-cache add curl musl-dev \
+    && rustup target add wasm32-unknown-unknown \
+    && name="wasm-pack-v${WASM_PACK_VERSION}-$(uname -m)-unknown-linux-musl" \
+    && curl -sSfL "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${name}.tar.gz" \
+    | tar -xz -C /usr/local/bin --strip-components=1 "${name}/wasm-pack"
 COPY . .
 RUN wasm-pack build rustpad-wasm
 
-FROM --platform=amd64 node:lts-alpine AS frontend
+FROM --platform=$BUILDPLATFORM docker.io/library/node:24-alpine AS frontend
 WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
 COPY --from=wasm /home/rust/src/rustpad-wasm/pkg rustpad-wasm/pkg

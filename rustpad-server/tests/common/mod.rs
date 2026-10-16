@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
-use warp::{filters::BoxedFilter, test::WsClient, Reply};
+use warp::{Reply, filters::BoxedFilter, test::WsClient};
 
 /// A test WebSocket client that sends and receives JSON messages.
 pub struct JsonSocket(WsClient);

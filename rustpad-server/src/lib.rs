@@ -11,7 +11,7 @@ use log::{error, info, warn};
 use rand::RngExt;
 use serde::Serialize;
 use tokio::time::{self, Instant};
-use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
+use warp::{Filter, Rejection, Reply, filters::BoxedFilter, ws::Ws};
 
 use crate::{access::AccessVerifier, database::Database, rustpad::Rustpad};
 

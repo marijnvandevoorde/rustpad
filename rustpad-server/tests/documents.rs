@@ -1,21 +1,22 @@
 //! Tests for the private document list behind Cloudflare Access.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rustpad_server::{
+    ServerConfig,
     access::AccessVerifier,
     database::{Database, PersistedDocument},
-    server, ServerConfig,
+    server,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use warp::{filters::BoxedFilter, Reply};
+use warp::{Reply, filters::BoxedFilter};
 
 const TEAM: &str = "example.cloudflareaccess.com";
 const AUD: &str = "test-audience-tag";

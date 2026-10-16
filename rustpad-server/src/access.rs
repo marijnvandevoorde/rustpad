@@ -9,8 +9,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
-use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
+use anyhow::{Context, Result, anyhow, bail};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use log::warn;
 use serde::Deserialize;
 use tokio::sync::RwLock;

@@ -7,8 +7,9 @@ use anyhow::Result;
 use common::*;
 use operational_transform::OperationSeq;
 use rustpad_server::{
+    ServerConfig,
     database::{Database, PersistedDocument},
-    server, server_with_flusher, ServerConfig,
+    server, server_with_flusher,
 };
 use serde_json::json;
 use tempfile::NamedTempFile;

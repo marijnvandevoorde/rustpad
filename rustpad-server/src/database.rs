@@ -2,8 +2,8 @@
 
 use std::str::FromStr;
 
-use anyhow::{bail, Result};
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, MySqlPool, SqlitePool};
+use anyhow::{Result, bail};
+use sqlx::{ConnectOptions, MySqlPool, SqlitePool, sqlite::SqliteConnectOptions};
 
 /// Represents a document persisted in database storage.
 #[derive(sqlx::FromRow, PartialEq, Eq, Clone, Debug)]
@@ -179,11 +179,7 @@ ON DUPLICATE KEY UPDATE
                 .rows_affected();
                 // MySQL reports 1 for an insert, 2 for an update and 0 when
                 // the row was already identical.
-                if rows <= 2 {
-                    1
-                } else {
-                    rows
-                }
+                if rows <= 2 { 1 } else { rows }
             }
         };
         if rows != 1 {
