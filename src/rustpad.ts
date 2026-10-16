@@ -10,6 +10,7 @@ export type RustpadOptions = {
   readonly onDisconnected?: () => void;
   readonly onDesynchronized?: () => void;
   readonly onChangeLanguage?: (language: string) => void;
+  readonly onChangeLocked?: (locked: boolean) => void;
   readonly onChangeUsers?: (users: Record<number, UserInfo>) => void;
   readonly reconnectInterval?: number;
 };
@@ -155,6 +156,8 @@ class Rustpad {
   private handleMessage(msg: ServerMsg) {
     if (msg.Identity !== undefined) {
       this.me = msg.Identity;
+      // A new connection; the server says so next if the document is locked.
+      this.options.onChangeLocked?.(false);
     } else if (msg.History !== undefined) {
       const { start, operations } = msg.History;
       if (start > this.revision) {
@@ -174,6 +177,8 @@ class Rustpad {
       }
     } else if (msg.Language !== undefined) {
       this.options.onChangeLanguage?.(msg.Language);
+    } else if (msg.Locked !== undefined) {
+      this.options.onChangeLocked?.(msg.Locked);
     } else if (msg.UserInfo !== undefined) {
       const { id, info } = msg.UserInfo;
       if (id !== this.me) {
@@ -440,6 +445,7 @@ type ServerMsg = {
     operations: UserOperation[];
   };
   Language?: string;
+  Locked?: boolean;
   UserInfo?: {
     id: number;
     info: UserInfo | null;

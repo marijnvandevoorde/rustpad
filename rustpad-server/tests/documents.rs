@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use common::*;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use operational_transform::OperationSeq;
 use rustpad_server::{
     ServerConfig,
     access::AccessVerifier,
@@ -17,6 +19,8 @@ use tempfile::NamedTempFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use warp::{Reply, filters::BoxedFilter};
+
+pub mod common;
 
 const TEAM: &str = "example.cloudflareaccess.com";
 const AUD: &str = "test-audience-tag";
@@ -351,6 +355,131 @@ async fn test_set_title() -> Result<()> {
             "/api/documents/nope/title",
             &auth,
             Some(json!({ "title": "x" }))
+        )
+        .await
+        .0,
+        404
+    );
+    Ok(())
+}
+
+/// Reads the messages a client gets on connecting, up to and including
+/// `last` (a message key such as "Locked").
+async fn initial(client: &mut JsonSocket, last: &str) -> Result<Vec<Value>> {
+    let mut messages = Vec::new();
+    loop {
+        let msg = client.recv().await?;
+        let done = msg.get(last).is_some();
+        messages.push(msg);
+        if done {
+            return Ok(messages);
+        }
+    }
+}
+
+/// Waits (up to 5 s) for a message with this key, skipping others.
+async fn recv_key(client: &mut JsonSocket, key: &str) -> Result<Value> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let msg = client.recv().await?;
+            if msg.get(key).is_some() {
+                return Ok(msg);
+            }
+        }
+    })
+    .await?
+}
+
+/// Waits (up to 5 s) for the server to close the socket, skipping messages.
+async fn expect_closed(client: &mut JsonSocket) -> Result<()> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while client.recv().await.is_ok() {}
+    })
+    .await?;
+    Ok(())
+}
+
+fn insert(revision: usize, base_len: u64, text: &str) -> Value {
+    let mut operation = OperationSeq::default();
+    operation.retain(base_len);
+    operation.insert(text);
+    json!({ "Edit": { "revision": revision, "operation": operation } })
+}
+
+#[tokio::test]
+async fn test_lock() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    let (filter, database, good) = owner_server().await?;
+    let auth = [("cf-access-jwt-assertion", good.as_str())];
+    let lock = "/api/documents/abc123/lock";
+
+    let mut alice = connect(&filter, "abc123").await?;
+    initial(&mut alice, "Language").await?;
+    let mut bob = connect(&filter, "abc123").await?;
+    initial(&mut bob, "Language").await?;
+
+    // Locking reaches every connected editor.
+    let (status, body) = send(
+        &filter,
+        "POST",
+        lock,
+        &auth,
+        Some(json!({ "locked": true })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(alice.recv().await?, json!({ "Locked": true }));
+    assert_eq!(bob.recv().await?, json!({ "Locked": true }));
+    assert!(database.list().await?[0].locked);
+
+    // Edits and language changes are refused (the socket is closed).
+    alice.send(&insert(1, 12, "!")).await;
+    expect_closed(&mut alice).await?;
+    bob.send(&json!({ "SetLanguage": "python" })).await;
+    expect_closed(&mut bob).await?;
+    expect_text(&filter, "abc123", "fn main() {}").await;
+
+    // Reconnecting clients, and a restarted server, see it locked.
+    let mut carol = connect(&filter, "abc123").await?;
+    let messages = initial(&mut carol, "Locked").await?;
+    assert!(messages.contains(&json!({ "Language": "rust" })));
+    let restarted = server(ServerConfig {
+        database: Some(database.clone()),
+        ..Default::default()
+    });
+    let mut dave = connect(&restarted, "abc123").await?;
+    initial(&mut dave, "Locked").await?;
+
+    // Unlocking makes it editable again.
+    let (status, _) = send(
+        &filter,
+        "POST",
+        lock,
+        &auth,
+        Some(json!({ "locked": false })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(recv_key(&mut carol, "Locked").await?, json!({ "Locked": false }));
+    carol.send(&insert(1, 12, "!")).await;
+    recv_key(&mut carol, "History").await?;
+    expect_text(&filter, "abc123", "fn main() {}!").await;
+    assert!(!database.list().await?[0].locked);
+
+    // Owner-only, and only for existing documents.
+    assert_eq!(
+        send(&filter, "POST", lock, &[], Some(json!({ "locked": true })))
+            .await
+            .0,
+        403
+    );
+    assert_eq!(
+        send(
+            &filter,
+            "POST",
+            "/api/documents/nope/lock",
+            &auth,
+            Some(json!({ "locked": true }))
         )
         .await
         .0,

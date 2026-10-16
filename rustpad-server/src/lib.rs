@@ -208,7 +208,15 @@ async fn get_or_load(state: &ServerState, id: &str) -> Result<Arc<Rustpad>, Reje
             // persister would then overwrite the stored text.
             let rustpad = Arc::new(match &state.database {
                 Some(db) => match db.try_load(&id).await {
-                    Ok(document) => document.map(Rustpad::from).unwrap_or_default(),
+                    Ok(Some(document)) => {
+                        let rustpad = Rustpad::from(document);
+                        match db.is_locked(&id).await {
+                            Ok(locked) => rustpad.set_locked(locked),
+                            Err(e) => return Err(warp::reject::custom(CustomReject(e))),
+                        }
+                        rustpad
+                    }
+                    Ok(None) => Rustpad::default(),
                     Err(e) => {
                         error!("when loading document {}: {}", id, e);
                         return Err(warp::reject::custom(CustomReject(e)));

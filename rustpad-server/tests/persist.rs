@@ -337,6 +337,10 @@ async fn check_list(uri: &str, prefix: &str) -> Result<()> {
         )
         .await?;
     assert!(database.set_title(&first, Some("First")).await?);
+    assert!(!database.is_locked(&first).await?);
+    assert!(database.set_locked(&first, true).await?);
+    assert!(database.is_locked(&first).await?);
+    assert!(!database.set_locked(&format!("{prefix}missing"), true).await?);
     // updated_at has one-second resolution.
     time::sleep(Duration::from_millis(1100)).await;
     database
@@ -357,6 +361,8 @@ async fn check_list(uri: &str, prefix: &str) -> Result<()> {
     let doc = mine[pos(&first)];
     assert_eq!(doc.title.as_deref(), Some("First"));
     assert_eq!(doc.language.as_deref(), Some("rust"));
+    assert!(doc.locked);
+    assert!(!mine[pos(&second)].locked);
     assert_eq!(doc.preview.chars().count(), 100);
     let updated = doc.updated_at.as_deref().expect("updated_at");
     assert_eq!(updated.len(), "2026-01-01T00:00:00Z".len());

@@ -24,6 +24,7 @@ export type SidebarProps = {
   connection: "connected" | "disconnected" | "desynchronized";
   darkMode: boolean;
   language: string;
+  locked: boolean;
   currentUser: UserInfo;
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
@@ -38,6 +39,7 @@ function Sidebar({
   connection,
   darkMode,
   language,
+  locked,
   currentUser,
   users,
   onDarkModeChange,
@@ -89,7 +91,7 @@ function Sidebar({
       <Heading mt={4} mb={1.5} size="sm">
         Language
       </Heading>
-      <NativeSelect.Root size="sm">
+      <NativeSelect.Root size="sm" disabled={locked}>
         <NativeSelect.Field
           aria-label="Language"
           bgColor={darkMode ? "#3c3c3c" : "white"}
@@ -183,6 +185,7 @@ function Sidebar({
         variant="outline"
         mt={1}
         onClick={onLoadSample}
+        disabled={locked}
       >
         <VscRepo />
         Read the code

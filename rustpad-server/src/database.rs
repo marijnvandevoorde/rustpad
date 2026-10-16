@@ -23,6 +23,8 @@ pub struct DocumentSummary {
     pub title: Option<String>,
     /// Language of the document.
     pub language: Option<String>,
+    /// Whether the document is locked (read-only).
+    pub locked: bool,
     /// Last save in UTC (`YYYY-MM-DDTHH:MM:SSZ`), unknown for documents saved
     /// before this was recorded.
     pub updated_at: Option<String>,
@@ -58,6 +60,10 @@ const MYSQL_ADDED_COLUMNS: &[(&str, &str)] = &[
     (
         "updated_at",
         "ALTER TABLE document ADD COLUMN updated_at DATETIME NULL",
+    ),
+    (
+        "locked",
+        "ALTER TABLE document ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE",
     ),
 ];
 
@@ -211,6 +217,51 @@ ON DUPLICATE KEY UPDATE
         Ok(true)
     }
 
+    /// Lock or unlock a stored document. Returns false if it does not exist.
+    pub async fn set_locked(&self, document_id: &str, locked: bool) -> Result<bool> {
+        if !self.exists(document_id).await? {
+            return Ok(false);
+        }
+        let query = "UPDATE document SET locked = ? WHERE id = ?";
+        match &self.pool {
+            Pool::Sqlite(pool) => {
+                sqlx::query(query)
+                    .bind(locked)
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+            }
+            Pool::MySql(pool) => {
+                sqlx::query(query)
+                    .bind(locked)
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether a stored document is locked (false if it does not exist).
+    pub async fn is_locked(&self, document_id: &str) -> Result<bool> {
+        let query = "SELECT locked FROM document WHERE id = ?";
+        let row: Option<(bool,)> = match &self.pool {
+            Pool::Sqlite(pool) => {
+                sqlx::query_as(query)
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            Pool::MySql(pool) => {
+                sqlx::query_as(query)
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
+        Ok(row.is_some_and(|(locked,)| locked))
+    }
+
     /// Whether a document is stored.
     pub async fn exists(&self, document_id: &str) -> Result<bool> {
         let query = "SELECT count(*) FROM document WHERE id = ?";
@@ -236,7 +287,7 @@ ON DUPLICATE KEY UPDATE
         Ok(match &self.pool {
             Pool::Sqlite(pool) => {
                 sqlx::query_as(
-                    "SELECT id, title, language, updated_at, substr(text, 1, ?) AS preview \
+                    "SELECT id, title, language, locked, updated_at, substr(text, 1, ?) AS preview \
                      FROM document ORDER BY updated_at IS NULL, updated_at DESC, id",
                 )
                 .bind(PREVIEW_CHARS)
@@ -246,7 +297,7 @@ ON DUPLICATE KEY UPDATE
             Pool::MySql(pool) => {
                 sqlx::query_as(
                     // The binary collation of id would decode as VARBINARY.
-                    "SELECT CAST(id AS CHAR CHARACTER SET utf8mb4) AS id, title, language, \
+                    "SELECT CAST(id AS CHAR CHARACTER SET utf8mb4) AS id, title, language, locked, \
                      DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
                      SUBSTRING(text, 1, ?) AS preview \
                      FROM document ORDER BY updated_at IS NULL, updated_at DESC, id",

@@ -6,6 +6,8 @@
 //! Requests that change something must send JSON, and a cross-site `Origin`
 //! is refused, so a page on another site cannot drive these endpoints.
 
+use std::sync::Arc;
+
 use log::{error, warn};
 use serde::Deserialize;
 use warp::http::{HeaderValue, StatusCode, header};
@@ -122,11 +124,53 @@ pub(crate) fn api(state: ServerState) -> BoxedFilter<(Response,)> {
         .and(warp::body::json())
         .and_then(set_title);
 
+    let lock = warp::path!(String / "lock")
+        .and(warp::post())
+        .and(auth.clone())
+        .and(with_state(state.clone()))
+        .and(warp::body::json())
+        .and_then(set_lock);
+
     warp::path("documents")
-        .and(list.or(title).unify())
+        .and(list.or(title).unify().or(lock).unify())
         .recover(recover)
         .unify()
         .boxed()
+}
+
+fn with_state(
+    state: ServerState,
+) -> impl Filter<Extract = (ServerState,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || state.clone())
+}
+
+#[derive(Deserialize)]
+struct LockRequest {
+    locked: bool,
+}
+
+async fn set_lock(
+    id: String,
+    db: Database,
+    state: ServerState,
+    body: LockRequest,
+) -> Result<Response, Rejection> {
+    let rustpad = state.documents.get(&id).map(|d| Arc::clone(&d.rustpad));
+    if let Some(rustpad) = &rustpad {
+        // Save the open document first, so the stored text is the locked one.
+        if rustpad.revision() > 0 || rustpad.language().is_some() {
+            db.store(&id, &rustpad.snapshot()).await.map_err(failed)?;
+        }
+    }
+    if !db.set_locked(&id, body.locked).await.map_err(failed)? {
+        return Ok(not_found());
+    }
+    if let Some(rustpad) = rustpad {
+        rustpad.set_locked(body.locked);
+    }
+    Ok(no_store(
+        warp::reply::json(&serde_json::json!({ "locked": body.locked })).into_response(),
+    ))
 }
 
 #[derive(Deserialize)]

@@ -34,6 +34,8 @@ struct State {
     operations: Vec<UserOperation>,
     text: String,
     language: Option<String>,
+    /// A locked document is read-only for editors.
+    locked: bool,
     users: HashMap<u64, UserInfo>,
     cursors: HashMap<u64, CursorData>,
 }
@@ -84,6 +86,8 @@ enum ServerMsg {
     },
     /// Broadcasts the current language, last writer wins.
     Language(String),
+    /// Broadcasts whether the document is locked (read-only).
+    Locked(bool),
     /// Broadcasts a user's information, or `None` on disconnect.
     UserInfo { id: u64, info: Option<UserInfo> },
     /// Broadcasts a user's cursor position.
@@ -166,6 +170,17 @@ impl Rustpad {
         state.language.clone()
     }
 
+    /// Returns whether the document is locked.
+    pub fn locked(&self) -> bool {
+        self.state.read().locked
+    }
+
+    /// Locks or unlocks the document for all editors.
+    pub fn set_locked(&self, locked: bool) {
+        self.state.write().locked = locked;
+        self.update.send(ServerMsg::Locked(locked)).ok();
+    }
+
     /// Returns the current revision.
     pub fn revision(&self) -> usize {
         let state = self.state.read();
@@ -233,6 +248,9 @@ impl Rustpad {
             if let Some(language) = &state.language {
                 messages.push(ServerMsg::Language(language.clone()));
             }
+            if state.locked {
+                messages.push(ServerMsg::Locked(true));
+            }
             for (&id, info) in &state.users {
                 messages.push(ServerMsg::UserInfo {
                     id,
@@ -276,6 +294,12 @@ impl Rustpad {
             Ok(text) => serde_json::from_str(text).context("failed to deserialize message")?,
             Err(()) => return Ok(()), // Ignore non-text messages
         };
+        let changes = matches!(msg, ClientMsg::Edit { .. } | ClientMsg::SetLanguage(_));
+        if changes && self.locked() {
+            // The editor is read-only when locked; refuse and let the client
+            // reconnect to the current state.
+            bail!("document is locked");
+        }
         match msg {
             ClientMsg::Edit {
                 revision,

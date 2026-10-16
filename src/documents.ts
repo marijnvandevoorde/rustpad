@@ -5,6 +5,7 @@ type DocumentSummary = {
   id: string;
   title: string | null;
   language: string | null;
+  locked: boolean;
   updated_at: string | null;
   preview: string;
 };
@@ -68,6 +69,18 @@ async function rename(doc: DocumentSummary) {
   }
 }
 
+async function toggleLock(doc: DocumentSummary) {
+  try {
+    const result = await api("POST", `api/documents/${doc.id}/lock`, {
+      locked: !doc.locked,
+    });
+    doc.locked = result.locked;
+    render();
+  } catch (error) {
+    alert(`Could not change the lock: ${error}`);
+  }
+}
+
 function row(doc: DocumentSummary): HTMLTableRowElement {
   const tr = document.createElement("tr");
 
@@ -84,6 +97,12 @@ function row(doc: DocumentSummary): HTMLTableRowElement {
   id.className = "id";
   id.textContent = doc.id;
   title.append(link, id);
+  if (doc.locked) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = "Locked";
+    title.append(badge);
+  }
 
   const language = document.createElement("td");
   language.textContent = doc.language ?? "";
@@ -100,7 +119,10 @@ function row(doc: DocumentSummary): HTMLTableRowElement {
 
   const actions = document.createElement("td");
   actions.className = "actions";
-  actions.append(button("Rename", () => rename(doc)));
+  actions.append(
+    button("Rename", () => rename(doc)),
+    button(doc.locked ? "Unlock" : "Lock", () => toggleLock(doc)),
+  );
 
   tr.append(title, language, updated, actions);
   return tr;

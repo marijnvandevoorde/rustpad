@@ -2,7 +2,12 @@ import { Box, Flex, HStack, Icon, Text } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useEffect, useRef, useState } from "react";
-import { VscChevronRight, VscFolderOpened, VscGist } from "react-icons/vsc";
+import {
+  VscChevronRight,
+  VscFolderOpened,
+  VscGist,
+  VscLock,
+} from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
 import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
@@ -31,6 +36,7 @@ function generateHue() {
 
 function App() {
   const [language, setLanguage] = useState("plaintext");
+  const [locked, setLocked] = useState(false);
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
@@ -74,6 +80,7 @@ function App() {
             setLanguage(language);
           }
         },
+        onChangeLocked: setLocked,
         onChangeUsers: setUsers,
       });
       return () => {
@@ -161,6 +168,7 @@ function App() {
           connection={connection}
           darkMode={darkMode}
           language={language}
+          locked={locked}
           currentUser={{ name, hue }}
           users={users}
           onDarkModeChange={handleDarkModeChange}
@@ -193,6 +201,16 @@ function App() {
             <Icon as={VscChevronRight} fontSize="md" />
             <Icon as={VscGist} fontSize="md" color="purple.500" />
             <Text>{id}</Text>
+            {locked && (
+              <HStack
+                gap={1}
+                ml="auto"
+                color={darkMode ? "#cca700" : "#9a6700"}
+              >
+                <Icon as={VscLock} fontSize="md" />
+                <Text>Locked (read-only)</Text>
+              </HStack>
+            )}
           </HStack>
           <Box flex={1} minH={0}>
             <Editor
@@ -201,6 +219,8 @@ function App() {
               options={{
                 automaticLayout: true,
                 fontSize: 13,
+                readOnly: locked,
+                readOnlyMessage: { value: "This document is locked." },
               }}
               onMount={(editor) => setEditor(editor)}
             />
