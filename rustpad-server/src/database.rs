@@ -12,6 +12,24 @@ pub struct PersistedDocument {
     pub text: String,
     /// Language of the document for editor syntax highlighting.
     pub language: Option<String>,
+    /// Title of the document, set by its users.
+    pub title: Option<String>,
+}
+
+/// A row of the document list, without the full text.
+#[derive(sqlx::FromRow, serde::Serialize, PartialEq, Eq, Clone, Debug)]
+pub struct DocumentSummary {
+    /// Document id, as used in the URL.
+    pub id: String,
+    /// Title of the document, if one was set.
+    pub title: Option<String>,
+    /// Language of the document.
+    pub language: Option<String>,
+    /// Last save in UTC (`YYYY-MM-DDTHH:MM:SSZ`), unknown for documents saved
+    /// before this was recorded.
+    pub updated_at: Option<String>,
+    /// The start of the text.
+    pub preview: String,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +51,21 @@ CREATE TABLE IF NOT EXISTS document (
     language VARCHAR(255)
 ) DEFAULT CHARSET = utf8mb4"#;
 
+/// Columns added after the first release, created when missing.
+const MYSQL_ADDED_COLUMNS: &[(&str, &str)] = &[
+    (
+        "title",
+        "ALTER TABLE document ADD COLUMN title VARCHAR(255) NULL",
+    ),
+    (
+        "updated_at",
+        "ALTER TABLE document ADD COLUMN updated_at DATETIME NULL",
+    ),
+];
+
+/// Characters of text returned as a preview in the document list.
+const PREVIEW_CHARS: i64 = 100;
+
 impl Database {
     /// Construct a new database from a SQLite or MySQL connection URI.
     ///
@@ -42,6 +75,18 @@ impl Database {
         if uri.starts_with("mysql://") {
             let pool = MySqlPool::connect(uri).await?;
             sqlx::query(MYSQL_SCHEMA).execute(&pool).await?;
+            for (column, ddl) in MYSQL_ADDED_COLUMNS {
+                let (exists,): (i64,) = sqlx::query_as(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = \
+                     DATABASE() AND table_name = 'document' AND column_name = ?",
+                )
+                .bind(column)
+                .fetch_one(&pool)
+                .await?;
+                if exists == 0 {
+                    sqlx::query(ddl).execute(&pool).await?;
+                }
+            }
             return Ok(Database {
                 pool: Pool::MySql(pool),
             });
@@ -61,7 +106,7 @@ impl Database {
 
     /// Load the text of a document from the database.
     pub async fn load(&self, document_id: &str) -> Result<PersistedDocument> {
-        let query = r#"SELECT text, language FROM document WHERE id = ?"#;
+        let query = r#"SELECT text, language, title FROM document WHERE id = ?"#;
         Ok(match &self.pool {
             Pool::Sqlite(pool) => {
                 sqlx::query_as(query)
@@ -96,16 +141,19 @@ impl Database {
             Pool::Sqlite(pool) => sqlx::query(
                 r#"
 INSERT INTO
-    document (id, text, language)
+    document (id, text, language, title, updated_at)
 VALUES
-    (?, ?, ?)
+    (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ON CONFLICT(id) DO UPDATE SET
     text = excluded.text,
-    language = excluded.language"#,
+    language = excluded.language,
+    title = excluded.title,
+    updated_at = excluded.updated_at"#,
             )
             .bind(document_id)
             .bind(&document.text)
             .bind(&document.language)
+            .bind(&document.title)
             .execute(pool)
             .await?
             .rows_affected(),
@@ -113,16 +161,19 @@ ON CONFLICT(id) DO UPDATE SET
                 let rows = sqlx::query(
                     r#"
 INSERT INTO
-    document (id, text, language)
+    document (id, text, language, title, updated_at)
 VALUES
-    (?, ?, ?) AS new
+    (?, ?, ?, ?, UTC_TIMESTAMP()) AS new
 ON DUPLICATE KEY UPDATE
     text = new.text,
-    language = new.language"#,
+    language = new.language,
+    title = new.title,
+    updated_at = new.updated_at"#,
                 )
                 .bind(document_id)
                 .bind(&document.text)
                 .bind(&document.language)
+                .bind(&document.title)
                 .execute(pool)
                 .await?
                 .rows_affected();
@@ -142,6 +193,33 @@ ON DUPLICATE KEY UPDATE
             );
         }
         Ok(())
+    }
+
+    /// List all documents, most recently saved first.
+    pub async fn list(&self) -> Result<Vec<DocumentSummary>> {
+        Ok(match &self.pool {
+            Pool::Sqlite(pool) => {
+                sqlx::query_as(
+                    "SELECT id, title, language, updated_at, substr(text, 1, ?) AS preview \
+                     FROM document ORDER BY updated_at IS NULL, updated_at DESC, id",
+                )
+                .bind(PREVIEW_CHARS)
+                .fetch_all(pool)
+                .await?
+            }
+            Pool::MySql(pool) => {
+                sqlx::query_as(
+                    // The binary collation of id would decode as VARBINARY.
+                    "SELECT CAST(id AS CHAR CHARACTER SET utf8mb4) AS id, title, language, \
+                     DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
+                     SUBSTRING(text, 1, ?) AS preview \
+                     FROM document ORDER BY updated_at IS NULL, updated_at DESC, id",
+                )
+                .bind(PREVIEW_CHARS)
+                .fetch_all(pool)
+                .await?
+            }
+        })
     }
 
     /// Count the number of documents in the database.

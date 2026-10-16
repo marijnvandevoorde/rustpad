@@ -31,6 +31,7 @@ function generateHue() {
 function App() {
   const toast = useToast();
   const [language, setLanguage] = useState("plaintext");
+  const [title, setTitle] = useState("");
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
@@ -55,6 +56,7 @@ function App() {
       const model = editor.getModel()!;
       model.setValue("");
       model.setEOL(0); // LF
+      setTitle("");
       rustpad.current = new Rustpad({
         uri: getWsUri(id),
         editor,
@@ -74,6 +76,7 @@ function App() {
             setLanguage(language);
           }
         },
+        onChangeTitle: setTitle,
         onChangeUsers: setUsers,
       });
       return () => {
@@ -82,6 +85,10 @@ function App() {
       };
     }
   }, [id, editor, toast, setUsers]);
+
+  useEffect(() => {
+    document.title = title ? `${title} · Rustpad` : "Rustpad";
+  }, [title]);
 
   useEffect(() => {
     if (connection === "connected") {
@@ -107,6 +114,14 @@ function App() {
         duration: 2000,
         isClosable: true,
       });
+    }
+  }
+
+  function handleTitleChange(newTitle: string) {
+    newTitle = newTitle.trim();
+    if (newTitle !== title) {
+      setTitle(newTitle);
+      rustpad.current?.setTitle(newTitle);
     }
   }
 
@@ -161,10 +176,12 @@ function App() {
           connection={connection}
           darkMode={darkMode}
           language={language}
+          title={title}
           currentUser={{ name, hue }}
           users={users}
           onDarkModeChange={handleDarkModeChange}
           onLanguageChange={handleLanguageChange}
+          onTitleChange={handleTitleChange}
           onLoadSample={() => handleLoadSample(false)}
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
@@ -193,6 +210,11 @@ function App() {
             <Icon as={VscChevronRight} fontSize="md" />
             <Icon as={VscGist} fontSize="md" color="purple.500" />
             <Text>{id}</Text>
+            {title && (
+              <Text noOfLines={1} color={darkMode ? "#cbcaca" : "#383838"}>
+                {title}
+              </Text>
+            )}
           </HStack>
           <Box flex={1} minH={0}>
             <Editor

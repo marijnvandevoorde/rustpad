@@ -14,6 +14,7 @@ export type RustpadOptions = {
   readonly onDisconnected?: () => void;
   readonly onDesynchronized?: () => void;
   readonly onChangeLanguage?: (language: string) => void;
+  readonly onChangeTitle?: (title: string) => void;
   readonly onChangeUsers?: (users: Record<number, UserInfo>) => void;
   readonly reconnectInterval?: number;
 };
@@ -102,6 +103,12 @@ class Rustpad {
     return this.ws !== undefined;
   }
 
+  /** Try to set the title of the document, if connected. */
+  setTitle(title: string): boolean {
+    this.ws?.send(`{"SetTitle":${JSON.stringify(title)}}`);
+    return this.ws !== undefined;
+  }
+
   /** Set the user's information. */
   setInfo(info: UserInfo) {
     this.myInfo = info;
@@ -178,6 +185,8 @@ class Rustpad {
       }
     } else if (msg.Language !== undefined) {
       this.options.onChangeLanguage?.(msg.Language);
+    } else if (msg.Title !== undefined) {
+      this.options.onChangeTitle?.(msg.Title);
     } else if (msg.UserInfo !== undefined) {
       const { id, info } = msg.UserInfo;
       if (id !== this.me) {
@@ -444,6 +453,7 @@ type ServerMsg = {
     operations: UserOperation[];
   };
   Language?: string;
+  Title?: string;
   UserInfo?: {
     id: number;
     info: UserInfo | null;

@@ -123,7 +123,8 @@ impl Flusher {
             // Stop accepting edits, so nothing changes after the snapshot.
             rustpad.kill();
             // A document that was never edited and has no language is empty.
-            if rustpad.revision() == 0 && rustpad.language().is_none() {
+            if rustpad.revision() == 0 && rustpad.language().is_none() && rustpad.title().is_none()
+            {
                 continue;
             }
             match db.store(&id, &rustpad.snapshot()).await {
@@ -264,21 +265,21 @@ const PERSIST_INTERVAL_JITTER: Duration = Duration::from_secs(1);
 async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
     // Start from the state loaded from the database, which needs no write.
     let mut last_revision = rustpad.revision();
-    let mut last_language = rustpad.language();
+    let mut last_meta = (rustpad.language(), rustpad.title());
     while !rustpad.killed() {
         let interval =
             PERSIST_INTERVAL + rand::rng().random_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
         let revision = rustpad.revision();
-        // A language change does not create a revision, so compare it too.
-        if revision > last_revision || rustpad.language() != last_language {
+        // Language and title changes do not create a revision, so compare them too.
+        if revision > last_revision || (rustpad.language(), rustpad.title()) != last_meta {
             info!("persisting revision {} for id = {}", revision, id);
             let document = rustpad.snapshot();
             if let Err(e) = db.store(&id, &document).await {
                 error!("when persisting document {}: {}", id, e);
             } else {
                 last_revision = revision;
-                last_language = document.language;
+                last_meta = (document.language, document.title);
             }
         }
     }

@@ -14,6 +14,9 @@ use warp::ws::{Message, WebSocket};
 
 use crate::{database::PersistedDocument, ot::transform_index};
 
+/// Longest title kept, in characters (the database column holds 255).
+const MAX_TITLE_CHARS: usize = 200;
+
 /// The main object representing a collaborative session.
 pub struct Rustpad {
     /// State modified by critical sections of the code.
@@ -34,6 +37,7 @@ struct State {
     operations: Vec<UserOperation>,
     text: String,
     language: Option<String>,
+    title: Option<String>,
     users: HashMap<u64, UserInfo>,
     cursors: HashMap<u64, CursorData>,
 }
@@ -66,6 +70,8 @@ enum ClientMsg {
     },
     /// Sets the language of the editor.
     SetLanguage(String),
+    /// Sets the title of the document; empty clears it.
+    SetTitle(String),
     /// Sets the user's current information.
     ClientInfo(UserInfo),
     /// Sets the user's cursor and selection positions.
@@ -84,6 +90,8 @@ enum ServerMsg {
     },
     /// Broadcasts the current language, last writer wins.
     Language(String),
+    /// Broadcasts the current title (empty if none), last writer wins.
+    Title(String),
     /// Broadcasts a user's information, or `None` on disconnect.
     UserInfo { id: u64, info: Option<UserInfo> },
     /// Broadcasts a user's cursor position.
@@ -120,6 +128,7 @@ impl From<PersistedDocument> for Rustpad {
             let mut state = rustpad.state.write();
             state.text = document.text;
             state.language = document.language;
+            state.title = document.title;
             state.operations.push(UserOperation {
                 id: u64::MAX,
                 operation,
@@ -157,6 +166,7 @@ impl Rustpad {
         PersistedDocument {
             text: state.text.clone(),
             language: state.language.clone(),
+            title: state.title.clone(),
         }
     }
 
@@ -164,6 +174,12 @@ impl Rustpad {
     pub fn language(&self) -> Option<String> {
         let state = self.state.read();
         state.language.clone()
+    }
+
+    /// Returns the current title, if one was set.
+    pub fn title(&self) -> Option<String> {
+        let state = self.state.read();
+        state.title.clone()
     }
 
     /// Returns the current revision.
@@ -233,6 +249,9 @@ impl Rustpad {
             if let Some(language) = &state.language {
                 messages.push(ServerMsg::Language(language.clone()));
             }
+            if let Some(title) = &state.title {
+                messages.push(ServerMsg::Title(title.clone()));
+            }
             for (&id, info) in &state.users {
                 messages.push(ServerMsg::UserInfo {
                     id,
@@ -288,6 +307,11 @@ impl Rustpad {
             ClientMsg::SetLanguage(language) => {
                 self.state.write().language = Some(language.clone());
                 self.update.send(ServerMsg::Language(language)).ok();
+            }
+            ClientMsg::SetTitle(title) => {
+                let title: String = title.trim().chars().take(MAX_TITLE_CHARS).collect();
+                self.state.write().title = (!title.is_empty()).then(|| title.clone());
+                self.update.send(ServerMsg::Title(title)).ok();
             }
             ClientMsg::ClientInfo(info) => {
                 self.state.write().users.insert(id, info.clone());
