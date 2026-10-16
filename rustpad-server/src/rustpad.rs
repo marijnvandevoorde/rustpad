@@ -160,6 +160,12 @@ impl Rustpad {
         }
     }
 
+    /// Returns the current language, if one was set.
+    pub fn language(&self) -> Option<String> {
+        let state = self.state.read();
+        state.language.clone()
+    }
+
     /// Returns the current revision.
     pub fn revision(&self) -> usize {
         let state = self.state.read();

@@ -214,18 +214,23 @@ const PERSIST_INTERVAL_JITTER: Duration = Duration::from_secs(1);
 
 /// Persists changed documents after a fixed time interval.
 async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
-    let mut last_revision = 0;
+    // Start from the state loaded from the database, which needs no write.
+    let mut last_revision = rustpad.revision();
+    let mut last_language = rustpad.language();
     while !rustpad.killed() {
         let interval = PERSIST_INTERVAL
             + rand::thread_rng().gen_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
         let revision = rustpad.revision();
-        if revision > last_revision {
+        // A language change does not create a revision, so compare it too.
+        if revision > last_revision || rustpad.language() != last_language {
             info!("persisting revision {} for id = {}", revision, id);
-            if let Err(e) = db.store(&id, &rustpad.snapshot()).await {
+            let document = rustpad.snapshot();
+            if let Err(e) = db.store(&id, &document).await {
                 error!("when persisting document {}: {}", id, e);
             } else {
                 last_revision = revision;
+                last_language = document.language;
             }
         }
     }

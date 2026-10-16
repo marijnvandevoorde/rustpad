@@ -135,3 +135,38 @@ async fn test_persist() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_persist_language() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+
+    let database = Database::new(&temp_sqlite_uri()?).await?;
+    let document = PersistedDocument {
+        text: "fn main() {}".into(),
+        language: None,
+    };
+    database.store("lang", &document).await?;
+
+    let filter = server(ServerConfig {
+        expiry_days: 2,
+        database: Some(database.clone()),
+    });
+
+    let mut client = connect(&filter, "lang").await?;
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Identity": 0 }));
+
+    // Only change the language, without editing the text.
+    client.send(&json!({ "SetLanguage": "rust" })).await;
+    client.recv().await?; // History (the loaded text)
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Language": "rust" }));
+
+    // Wait for the persister (every 3-4 seconds).
+    time::sleep(Duration::from_millis(4500)).await;
+    let stored = database.load("lang").await?;
+    assert_eq!(stored.text, "fn main() {}");
+    assert_eq!(stored.language.as_deref(), Some("rust"));
+
+    Ok(())
+}
