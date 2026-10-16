@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Documents · Rustpad</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Documents</h1>
+        <input
+          id="filter"
+          type="search"
+          placeholder="Filter by title, id, language or text"
+          autocomplete="off"
+          autofocus
+        />
+      </header>
+      <p id="status">Loading…</p>
+      <table id="documents" hidden>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Language</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </main>
+    <script type="module" src="/src/documents.ts"></script>
+  </body>
+</html>

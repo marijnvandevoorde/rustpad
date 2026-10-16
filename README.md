@@ -101,6 +101,16 @@ following environment variables on startup:
   for persistence instead of SQLite; it takes precedence over `SQLITE_URI`. The
   `document` table is created on startup. Add `?ssl-mode=REQUIRED` to require
   TLS without verifying the server certificate.
+- `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`: Enable a private list of all
+  documents at `/documents` (data at `/api/documents`), meant to sit behind a
+  [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+  application on those two paths. The server checks the signed
+  `Cf-Access-Jwt-Assertion` header against the team's keys (for example
+  `example.cloudflareaccess.com`) and the application's AUD tag. Without these
+  variables (or without a database) both paths return 404. The editor itself
+  stays anonymous.
+- `CF_ACCESS_ALLOWED_EMAILS`: Optional comma-separated list of email addresses
+  allowed to see the list, checked in addition to the Access policy.
 - `PORT`: Which local port to listen for HTTP connections on (defaults to 3030).
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more

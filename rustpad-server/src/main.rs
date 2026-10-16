@@ -1,5 +1,7 @@
 use log::info;
-use rustpad_server::{database::Database, server_with_flusher, ServerConfig};
+use rustpad_server::{
+    access::AccessVerifier, database::Database, server_with_flusher, ServerConfig,
+};
 
 #[tokio::main]
 async fn main() {
@@ -11,7 +13,7 @@ async fn main() {
         .parse()
         .expect("Unable to parse PORT");
 
-    let config = ServerConfig {
+    let mut config = ServerConfig {
         expiry_days: std::env::var("EXPIRY_DAYS")
             .unwrap_or_else(|_| String::from("1"))
             .parse()
@@ -24,7 +26,23 @@ async fn main() {
             ),
             Err(_) => None,
         },
+        access: None,
     };
+
+    if let (Ok(team), Ok(aud)) = (
+        std::env::var("CF_ACCESS_TEAM_DOMAIN"),
+        std::env::var("CF_ACCESS_AUD"),
+    ) {
+        if !team.trim().is_empty() && !aud.trim().is_empty() {
+            let emails: Vec<String> = std::env::var("CF_ACCESS_ALLOWED_EMAILS")
+                .unwrap_or_default()
+                .split(',')
+                .map(String::from)
+                .collect();
+            info!("document list enabled for Access team {}", team.trim());
+            config.access = Some(AccessVerifier::new(&team, &aud, &emails));
+        }
+    }
 
     let (filter, flusher) = server_with_flusher(config);
     tokio::select! {

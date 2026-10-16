@@ -139,6 +139,7 @@ async fn test_persist() -> Result<()> {
     let filter = server(ServerConfig {
         expiry_days: 2,
         database: Some(Database::new(&temp_sqlite_uri()?).await?),
+        ..Default::default()
     });
 
     expect_text(&filter, "persist", "").await;
@@ -193,6 +194,7 @@ async fn test_persist_language() -> Result<()> {
     let filter = server(ServerConfig {
         expiry_days: 2,
         database: Some(database.clone()),
+        ..Default::default()
     });
 
     let mut client = connect(&filter, "lang").await?;
@@ -222,6 +224,7 @@ async fn test_flush() -> Result<()> {
     let (filter, flusher) = server_with_flusher(ServerConfig {
         expiry_days: 2,
         database: Some(database.clone()),
+        ..Default::default()
     });
 
     // An untouched document is not stored.
@@ -257,6 +260,7 @@ async fn test_load_error() -> Result<()> {
     let filter = server(ServerConfig {
         expiry_days: 2,
         database: Some(database),
+        ..Default::default()
     });
 
     // Break the database, so loading fails with an error other than "missing".

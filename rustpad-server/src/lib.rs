@@ -7,14 +7,15 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use dashmap::DashMap;
-use log::{error, info};
+use log::{error, info, warn};
 use rand::Rng;
 use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{database::Database, rustpad::Rustpad};
+use crate::{access::AccessVerifier, database::Database, rustpad::Rustpad};
 
+pub mod access;
 pub mod database;
 mod ot;
 mod rustpad;
@@ -57,6 +58,8 @@ struct ServerState {
     documents: Arc<DashMap<String, Document>>,
     /// Connection to the database pool, if persistence is enabled.
     database: Option<Database>,
+    /// Cloudflare Access verifier, if the document list is enabled.
+    access: Option<AccessVerifier>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -77,6 +80,9 @@ pub struct ServerConfig {
     pub expiry_days: u32,
     /// Database object, for persistence if desired.
     pub database: Option<Database>,
+    /// Enables the private document list (`/documents`), for users that pass
+    /// this Cloudflare Access check. Needs a database.
+    pub access: Option<AccessVerifier>,
 }
 
 impl Default for ServerConfig {
@@ -84,6 +90,7 @@ impl Default for ServerConfig {
         Self {
             expiry_days: 1,
             database: None,
+            access: None,
         }
     }
 }
@@ -96,7 +103,19 @@ pub fn server(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
 /// Like [`server`], plus a [`Flusher`] to save every document before exiting.
 pub fn server_with_flusher(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, Flusher) {
     let (backend, state) = backend(config);
-    let filter = warp::path("api").and(backend).or(frontend()).boxed();
+    let page = warp::path!("documents")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(access::HEADER))
+        .and(warp::any().map({
+            let state = state.clone();
+            move || state.clone()
+        }))
+        .and_then(documents_page_handler);
+    let filter = warp::path("api")
+        .and(backend)
+        .or(page)
+        .or(frontend())
+        .boxed();
     (filter, Flusher(state))
 }
 
@@ -146,6 +165,7 @@ fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
     let state = ServerState {
         documents: Default::default(),
         database: config.database,
+        access: config.access,
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
 
@@ -167,10 +187,19 @@ fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
         .as_secs();
     let stats = warp::path!("stats")
         .and(warp::any().map(move || start_time))
-        .and(state_filter)
+        .and(state_filter.clone())
         .and_then(stats_handler);
 
-    (socket.or(text).or(stats).boxed(), returned_state)
+    let documents = warp::path!("documents")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(access::HEADER))
+        .and(state_filter.clone())
+        .and_then(documents_handler);
+
+    (
+        socket.or(text).or(stats).or(documents).boxed(),
+        returned_state,
+    )
 }
 
 /// Handler for the `/api/socket/{id}` endpoint.
@@ -220,6 +249,70 @@ async fn text_handler(id: String, state: ServerState) -> Result<impl Reply, Reje
             }
         }
     })
+}
+
+/// Checks a Cloudflare Access token for the document list. Rejects with "not
+/// found" when the list is not enabled, so it looks like it does not exist.
+async fn check_access(
+    token: Option<String>,
+    state: &ServerState,
+) -> Result<Result<&Database, warp::reply::Response>, Rejection> {
+    let (Some(verifier), Some(db)) = (&state.access, &state.database) else {
+        return Err(warp::reject::not_found());
+    };
+    let denied = || {
+        Err(
+            warp::reply::with_status("Forbidden", warp::http::StatusCode::FORBIDDEN)
+                .into_response(),
+        )
+    };
+    let Some(token) = token else {
+        return Ok(denied());
+    };
+    match verifier.verify(&token).await {
+        Ok(_) => Ok(Ok(db)),
+        Err(e) => {
+            warn!("rejected an Access token: {e:#}");
+            Ok(denied())
+        }
+    }
+}
+
+/// Handler for the `/api/documents` endpoint: all documents, newest first.
+async fn documents_handler(
+    token: Option<String>,
+    state: ServerState,
+) -> Result<warp::reply::Response, Rejection> {
+    let db = match check_access(token, &state).await? {
+        Ok(db) => db,
+        Err(denied) => return Ok(denied),
+    };
+    match db.list().await {
+        Ok(list) => Ok(no_store(warp::reply::json(&list).into_response())),
+        Err(e) => Err(warp::reject::custom(CustomReject(e))),
+    }
+}
+
+/// Handler for the `/documents` page.
+async fn documents_page_handler(
+    token: Option<String>,
+    state: ServerState,
+) -> Result<warp::reply::Response, Rejection> {
+    if let Err(denied) = check_access(token, &state).await? {
+        return Ok(denied);
+    }
+    match tokio::fs::read_to_string("dist/documents.html").await {
+        Ok(html) => Ok(no_store(warp::reply::html(html).into_response())),
+        Err(_) => Err(warp::reject::not_found()),
+    }
+}
+
+fn no_store(mut response: warp::reply::Response) -> warp::reply::Response {
+    response.headers_mut().insert(
+        warp::http::header::CACHE_CONTROL,
+        warp::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 /// Handler for the `/api/stats` endpoint.
