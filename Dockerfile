@@ -17,6 +17,13 @@ RUN apk --no-cache add curl musl-dev \
     && curl -sSfL "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${name}.tar.gz" \
     | tar -xz -C /usr/local/bin --strip-components=1 "${name}/wasm-pack"
 COPY . .
+# wasm-pack would download a glibc wasm-bindgen on arm64, which does not run on
+# Alpine; install the musl build of the version in Cargo.lock instead.
+RUN version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p') \
+    && name="wasm-bindgen-${version}-$(uname -m)-unknown-linux-musl" \
+    && curl -sSfL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${version}/${name}.tar.gz" \
+    | tar -xz -C /usr/local/bin --strip-components=1 "${name}/wasm-bindgen" \
+    && wasm-bindgen --version
 RUN wasm-pack build rustpad-wasm
 
 FROM --platform=$BUILDPLATFORM docker.io/library/node:24-alpine AS frontend
