@@ -90,10 +90,49 @@ impl Default for ServerConfig {
 
 /// A combined filter handling all server routes.
 pub fn server(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
-    warp::path("api")
-        .and(backend(config))
-        .or(frontend())
-        .boxed()
+    server_with_flusher(config).0
+}
+
+/// Like [`server`], plus a [`Flusher`] to save every document before exiting.
+pub fn server_with_flusher(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, Flusher) {
+    let (backend, state) = backend(config);
+    let filter = warp::path("api").and(backend).or(frontend()).boxed();
+    (filter, Flusher(state))
+}
+
+/// Saves all in-memory documents to the database, e.g. on shutdown, so edits
+/// made since the last periodic save are not lost.
+#[derive(Clone)]
+pub struct Flusher(ServerState);
+
+impl Flusher {
+    /// Disconnects all clients and stores every edited document. Returns the
+    /// number of documents stored.
+    pub async fn flush(&self) -> usize {
+        let Some(db) = &self.0.database else {
+            return 0;
+        };
+        let documents: Vec<(String, Arc<Rustpad>)> = self
+            .0
+            .documents
+            .iter()
+            .map(|entry| (entry.key().clone(), Arc::clone(&entry.rustpad)))
+            .collect();
+        let mut stored = 0;
+        for (id, rustpad) in documents {
+            // Stop accepting edits, so nothing changes after the snapshot.
+            rustpad.kill();
+            // A document that was never edited and has no language is empty.
+            if rustpad.revision() == 0 && rustpad.language().is_none() {
+                continue;
+            }
+            match db.store(&id, &rustpad.snapshot()).await {
+                Ok(()) => stored += 1,
+                Err(e) => error!("when flushing document {}: {}", id, e),
+            }
+        }
+        stored
+    }
 }
 
 /// Construct routes for static files from React.
@@ -102,13 +141,14 @@ fn frontend() -> BoxedFilter<(impl Reply,)> {
 }
 
 /// Construct backend routes, including WebSocket handlers.
-fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
+fn backend(config: ServerConfig) -> (BoxedFilter<(impl Reply,)>, ServerState) {
     let state = ServerState {
         documents: Default::default(),
         database: config.database,
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
 
+    let returned_state = state.clone();
     let state_filter = warp::any().map(move || state.clone());
 
     let socket = warp::path!("socket" / String)
@@ -129,7 +169,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .and(state_filter)
         .and_then(stats_handler);
 
-    socket.or(text).or(stats).boxed()
+    (socket.or(text).or(stats).boxed(), returned_state)
 }
 
 /// Handler for the `/api/socket/{id}` endpoint.

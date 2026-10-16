@@ -8,7 +8,7 @@ use common::*;
 use operational_transform::OperationSeq;
 use rustpad_server::{
     database::{Database, PersistedDocument},
-    server, ServerConfig,
+    server, server_with_flusher, ServerConfig,
 };
 use serde_json::json;
 use tempfile::NamedTempFile;
@@ -168,5 +168,39 @@ async fn test_persist_language() -> Result<()> {
     assert_eq!(stored.text, "fn main() {}");
     assert_eq!(stored.language.as_deref(), Some("rust"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_flush() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+
+    let database = Database::new(&temp_sqlite_uri()?).await?;
+    let (filter, flusher) = server_with_flusher(ServerConfig {
+        expiry_days: 2,
+        database: Some(database.clone()),
+    });
+
+    // An untouched document is not stored.
+    let mut empty = connect(&filter, "empty").await?;
+    assert_eq!(empty.recv().await?, json!({ "Identity": 0 }));
+
+    let mut client = connect(&filter, "flush").await?;
+    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    let mut operation = OperationSeq::default();
+    operation.insert("unsaved");
+    client
+        .send(&json!({ "Edit": { "revision": 0, "operation": operation } }))
+        .await;
+    client.recv().await?.get("History").expect("history");
+
+    // Flush right away, before the periodic persister has run.
+    assert!(database.load("flush").await.is_err());
+    assert_eq!(flusher.flush().await, 1);
+    assert_eq!(database.load("flush").await?.text, "unsaved");
+    assert!(database.load("empty").await.is_err());
+
+    // Connections to flushed documents are closed.
+    client.recv_closed().await?;
     Ok(())
 }

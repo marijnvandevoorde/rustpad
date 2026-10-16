@@ -1,4 +1,5 @@
-use rustpad_server::{database::Database, server, ServerConfig};
+use log::info;
+use rustpad_server::{database::Database, server_with_flusher, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -25,5 +26,27 @@ async fn main() {
         },
     };
 
-    warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;
+    let (filter, flusher) = server_with_flusher(config);
+    tokio::select! {
+        _ = warp::serve(filter).run(([0, 0, 0, 0], port)) => {}
+        _ = shutdown_signal() => {
+            let stored = flusher.flush().await;
+            info!("shutting down, saved {} documents", stored);
+        }
+    }
+}
+
+/// Waits for SIGTERM (sent by `docker stop` and Kubernetes) or Ctrl-C.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await.ok();
 }
