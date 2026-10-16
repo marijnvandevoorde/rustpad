@@ -144,7 +144,10 @@ open `http://localhost:3030` in your browser.
 docker run --rm -dp 3030:3030 ekzhang/rustpad
 ```
 
-We deploy a public instance of this image using [Fly.io](https://fly.io/).
+This fork runs at code.small-victories.co on the Kubernetes cluster `sv-oke`.
+`npm run deploy` ships `origin/main` there with the shared `sv-deploy` script from the
+Oracle repo (config in `deploy.env`); `npm run deploy:check` shows what runs. `SV_DEPLOY`
+overrides the script's path (default `../Oracle/deploy/sv-deploy`).
 
 ## In the media
 
