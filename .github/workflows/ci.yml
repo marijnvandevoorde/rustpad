@@ -1,12 +1,9 @@
 name: CI
 
+# Manual only. A manual run builds the image for linux/amd64 without pushing it
+# (the push steps only ran on a push event, which no longer triggers this).
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   docker:
