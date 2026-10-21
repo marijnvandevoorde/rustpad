@@ -19,6 +19,8 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    cooldown:
+      default-days: 3
 
   # Frontend (package.json + package-lock.json at the root).
   - package-ecosystem: "npm"
@@ -33,6 +35,8 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    cooldown:
+      default-days: 3
 
   # Base images in the Dockerfile at the root.
   - package-ecosystem: "docker"
@@ -47,6 +51,8 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    cooldown:
+      default-days: 3
 
   # Actions used by the workflows in .github/workflows/.
   - package-ecosystem: "github-actions"
@@ -61,3 +67,5 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    cooldown:
+      default-days: 3
