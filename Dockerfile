@@ -1,4 +1,4 @@
-FROM docker.io/library/rust:1.95-alpine AS backend
+FROM docker.io/library/rust:1.98-alpine AS backend
 WORKDIR /home/rust/src
 RUN apk --no-cache add musl-dev openssl-dev
 COPY . .
@@ -8,7 +8,7 @@ RUN cargo build --release
 
 # The WebAssembly and frontend stages produce platform-independent files, so
 # they run on the build machine's own platform.
-FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.95-alpine AS wasm
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.98-alpine AS wasm
 ARG WASM_PACK_VERSION=0.15.0
 WORKDIR /home/rust/src
 RUN apk --no-cache add curl musl-dev \
