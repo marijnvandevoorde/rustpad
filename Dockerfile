@@ -26,7 +26,7 @@ RUN version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version
     && wasm-bindgen --version
 RUN wasm-pack build rustpad-wasm
 
-FROM --platform=$BUILDPLATFORM docker.io/library/node:24-alpine AS frontend
+FROM --platform=$BUILDPLATFORM docker.io/library/node:25-alpine AS frontend
 WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
 COPY --from=wasm /home/rust/src/rustpad-wasm/pkg rustpad-wasm/pkg
