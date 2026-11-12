@@ -13,7 +13,7 @@ futures = "0.3.34"
 jsonwebtoken = { version = "11.1", features = ["rust_crypto"] }
 log = "0.4.34"
 operational-transform = { version = "0.6.1", features = ["serde"] }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 pretty_env_logger = "0.5"
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
