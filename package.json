@@ -37,6 +37,7 @@
     "vite-plugin-wasm": "^3.6.0"
   },
   "overrides": {
-    "dompurify": "^3.4.16"
+    "dompurify": "^3.4.16",
+    "minimatch": "^11.0.8"
   }
 }
