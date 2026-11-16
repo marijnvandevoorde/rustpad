@@ -78,6 +78,9 @@ impl AccessVerifier {
         allowed_emails: &[String],
         certs_url: &str,
     ) -> Self {
+        // reqwest is built without a crypto provider (the default would pull in
+        // aws-lc-rs); use ring. This fails harmlessly if one is already set.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()

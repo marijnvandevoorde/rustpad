@@ -1,6 +1,6 @@
 FROM docker.io/library/rust:1.98-alpine AS backend
 WORKDIR /home/rust/src
-RUN apk --no-cache add musl-dev openssl-dev
+RUN apk --no-cache add ca-certificates musl-dev openssl-dev
 COPY . .
 # Tests run in the debug profile, so the release build is the only LTO build.
 RUN cargo test
@@ -38,6 +38,9 @@ RUN npm run check
 RUN npm run build
 
 FROM scratch
+# The Cloudflare Access key fetch verifies TLS against the system CA store.
+COPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 COPY --from=frontend /usr/src/app/dist dist
 COPY --from=backend /home/rust/src/target/release/rustpad-server .
 USER 1000:1000
