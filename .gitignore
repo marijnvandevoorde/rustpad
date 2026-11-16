@@ -1,5 +1,7 @@
 /target
-pkg
+/rustpad-wasm/pkg/*
+# Stub so Dependabot can resolve the file: dependency; wasm-pack overwrites it.
+!/rustpad-wasm/pkg/package.json
 
 node_modules
 .DS_Store

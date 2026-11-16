@@ -1,6 +1,6 @@
 /.git
 /target
-pkg
+rustpad-wasm/pkg
 /node_modules
 /dist
 *.local
