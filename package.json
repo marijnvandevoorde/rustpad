@@ -13,7 +13,7 @@
     "deploy:check": "\"${SV_DEPLOY:-../Oracle/deploy/sv-deploy}\" --check"
   },
   "dependencies": {
-    "@chakra-ui/react": "^3.37.0",
+    "@chakra-ui/react": "^3.38.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@monaco-editor/react": "^4.7.0",
@@ -29,11 +29,11 @@
     "@types/lodash.debounce": "^4.0.9",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.3.0",
     "monaco-editor": "^0.57.0",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.8",
     "vite-plugin-wasm": "^3.6.0"
   },
   "overrides": {
